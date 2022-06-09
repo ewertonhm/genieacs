@@ -76,13 +76,13 @@ function renderStagingSpv(task: StageTask, queueFunc, cancelFunc): Children {
       ]
     );
   } else {
+    const type = task.parameterValues[0][2];
+    let value = task.parameterValues[0][1];
+    if (type === "xsd:dateTime" && typeof value === "number")
+      value = new Date(value).toJSON() || value;
     input = m("input", {
-      type: ["xsd:dateTime", "xsd:int", "xsd:unsignedInt"].includes(
-        task.parameterValues[0][2]
-      )
-        ? "number"
-        : "text",
-      value: task.parameterValues[0][1],
+      type: ["xsd:int", "xsd:unsignedInt"].includes(type) ? "number" : "text",
+      value: value,
       oninput: (e) => {
         e.redraw = false;
         task.parameterValues[0][1] = input.dom.value;
@@ -121,12 +121,15 @@ function renderStagingDownload(task: StageTask): Children {
   if (productClass) productClass = decodeURIComponent(productClass);
 
   const typesList = [
-    "",
-    "1 Firmware Upgrade Image",
-    "2 Web Content",
-    "3 Vendor Configuration File",
-    "4 Tone File",
-    "5 Ringer File",
+    ...new Set([
+      "",
+      "1 Firmware Upgrade Image",
+      "2 Web Content",
+      "3 Vendor Configuration File",
+      "4 Tone File",
+      "5 Ringer File",
+      ...files.value.map((f) => f["metadata.fileType"]).filter((f) => f),
+    ]),
   ].map((t) =>
     m(
       "option",
@@ -480,7 +483,7 @@ function renderNotifications(notifs): Child[] {
           },
           onbeforeremove: (vnode) => {
             (vnode.dom as HTMLDivElement).style.opacity = "0";
-            return new Promise((resolve) => {
+            return new Promise<void>((resolve) => {
               setTimeout(() => {
                 resolve();
               }, 500);
@@ -590,7 +593,7 @@ const component: ClosureComponent = (): Component => {
                   }
                 )
                   .then(() => {
-                    store.fulfill(0, Date.now());
+                    store.setTimestamp(Date.now());
                   })
                   .catch((err) => {
                     notifications.push("error", err.message);

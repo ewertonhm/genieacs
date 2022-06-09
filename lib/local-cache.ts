@@ -50,8 +50,8 @@ interface Snapshot {
   ui: UiConfig;
 }
 
-const REFRESH = 3000;
-const EVICT_TIMEOUT = 60000;
+const REFRESH = 5000;
+const EVICT_TIMEOUT = 120000;
 
 const snapshots = new Map<string, Snapshot>();
 let currentSnapshot: string = null;
@@ -131,7 +131,7 @@ async function fetchPresets(): Promise<Preset[]> {
 
     // If no keys are defined, consider all parameters as keys to keep the
     // same behavior from v1.0
-    if (!obj["_keys"] || !obj["_keys"].length)
+    if (!obj["_keys"]?.length)
       obj["_keys"] = Object.keys(obj).filter((k) => !k.startsWith("_"));
 
     return obj;
@@ -266,9 +266,7 @@ async function fetchProvisions(): Promise<Provisions> {
       .createHash("md5")
       .update(r["script"])
       .digest("hex");
-    provisions[
-      r["_id"]
-    ].script = new vm.Script(
+    provisions[r["_id"]].script = new vm.Script(
       `"use strict";(function(){\n${r["script"]}\n})();`,
       { filename: r["_id"], lineOffset: -1, timeout: 50 }
     );
@@ -287,9 +285,7 @@ async function fetchVirtualParameters(): Promise<VirtualParameters> {
       .createHash("md5")
       .update(r["script"])
       .digest("hex");
-    virtualParameters[
-      r["_id"]
-    ].script = new vm.Script(
+    virtualParameters[r["_id"]].script = new vm.Script(
       `"use strict";(function(){\n${r["script"]}\n})();`,
       { filename: r["_id"], lineOffset: -1, timeout: 50 }
     );
@@ -325,8 +321,6 @@ async function fetchFiles(): Promise<Files> {
     const id = r["filename"] || r["_id"].toString();
     files[id] = {};
     files[id].length = r["length"];
-    files[id].md5 = r["md5"];
-    files[id].contentType = r["contentType"];
   }
 
   return files;
@@ -357,6 +351,7 @@ async function fetchConfig(): Promise<[Config, UiConfig]> {
     device: {},
     index: {},
     overview: {},
+    pageSize: null,
   };
   const _config = {};
 
@@ -366,12 +361,13 @@ async function fetchConfig(): Promise<[Config, UiConfig]> {
     _config[c.id] = val;
     if (c.id.startsWith("ui.")) {
       const keys = c.id.split(".");
+      if (!(keys[1] in ui)) continue;
       // remove the first key(ui)
       keys.shift();
       let ref = ui;
       while (keys.length > 1) {
         const k = keys.shift();
-        if (typeof ref[k] !== "object") ref[k] = {};
+        if (ref[k] == null || typeof ref[k] !== "object") ref[k] = {};
         ref = ref[k];
       }
       ref[keys[0]] = val;
@@ -398,7 +394,7 @@ async function refresh(): Promise<void> {
     return;
   }
 
-  const lockToken = await cache.acquireLock("presets_hash_lock", 4000, 4000);
+  const lockToken = await cache.acquireLock("presets_hash_lock", 5000, 5000);
 
   const res = await Promise.all([
     fetchPresets(),
@@ -501,7 +497,7 @@ export function getConfig(
   if (!(key in snapshot.config)) {
     if (key in oldOpts) {
       let id;
-      if (context && context["id"]) {
+      if (context?.["id"]) {
         id = context["id"];
       } else if (cb) {
         id = cb(["PARAM", "DeviceID.ID"]);

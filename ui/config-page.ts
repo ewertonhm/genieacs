@@ -60,12 +60,12 @@ function putActionHandler(action, _object, isNew?): Promise<ValidationErrors> {
         .resourceExists("config", id)
         .then((exists) => {
           if (exists && isNew) {
-            store.fulfill(0, Date.now());
+            store.setTimestamp(Date.now());
             return void resolve({ _id: "Config already exists" });
           }
 
           if (!exists && !isNew) {
-            store.fulfill(0, Date.now());
+            store.setTimestamp(Date.now());
             return void resolve({ _id: "Config does not exist" });
           }
 
@@ -76,8 +76,8 @@ function putActionHandler(action, _object, isNew?): Promise<ValidationErrors> {
                 "success",
                 `Config ${exists ? "updated" : "created"}`
               );
-              store.fulfill(0, Date.now());
-              resolve();
+              store.setTimestamp(Date.now());
+              resolve(null);
             })
             .catch(reject);
         })
@@ -87,11 +87,11 @@ function putActionHandler(action, _object, isNew?): Promise<ValidationErrors> {
         .deleteResource("config", object["_id"])
         .then(() => {
           notifications.push("success", "Config deleted");
-          store.fulfill(0, Date.now());
-          resolve();
+          store.setTimestamp(Date.now());
+          resolve(null);
         })
         .catch((err) => {
-          store.fulfill(0, Date.now());
+          store.setTimestamp(Date.now());
           reject(err);
         });
     } else {
@@ -154,7 +154,7 @@ function renderTable(confsResponse, searchString): Children {
               {
                 base: conf,
                 actionHandler: (action, object) => {
-                  return new Promise((resolve) => {
+                  return new Promise<void>((resolve) => {
                     putActionHandler(action, object, false)
                       .then((errors) => {
                         const ErrorList = errors ? Object.values(errors) : [];
@@ -255,7 +255,7 @@ export const component: ClosureComponent = (): Component => {
                 Object.assign(
                   {
                     actionHandler: (action, object) => {
-                      return new Promise((resolve) => {
+                      return new Promise<void>((resolve) => {
                         putActionHandler(action, object, true)
                           .then((errors) => {
                             const errorList = errors
@@ -267,7 +267,7 @@ export const component: ClosureComponent = (): Component => {
                             } else {
                               overlay.close(cb);
                             }
-                            resolve();
+                            resolve(null);
                           })
                           .catch((err) => {
                             notifications.push("error", err.message);
@@ -322,7 +322,7 @@ export const component: ClosureComponent = (): Component => {
                     uiConfigComponent,
                     Object.assign(
                       {
-                        onUpdate: (errs: string[]) => {
+                        onUpdate: (errs: Record<string, string>) => {
                           const errors = errs ? Object.values(errs) : [];
                           if (errors.length) {
                             for (const err of errors)
@@ -337,11 +337,11 @@ export const component: ClosureComponent = (): Component => {
                             );
                             overlay.close(cb);
                           }
-                          store.fulfill(0, Date.now());
+                          store.setTimestamp(Date.now());
                         },
                         onError: (err) => {
                           notifications.push("error", err.message);
-                          store.fulfill(0, Date.now());
+                          store.setTimestamp(Date.now());
                           overlay.close(cb);
                         },
                       },
@@ -366,14 +366,18 @@ export const component: ClosureComponent = (): Component => {
       return [
         m("h1", "Listing config"),
         m(
-          ".all-parameters",
-          search,
+          "loading",
+          { queries: [confs] },
           m(
-            ".parameter-list",
-            { style: "height: 400px" },
-            renderTable(confs, vnode.state["searchString"])
-          ),
-          m(".actions-bar", [newConfig].concat(subs))
+            ".all-parameters",
+            search,
+            m(
+              ".parameter-list",
+              { style: "height: 400px" },
+              renderTable(confs, vnode.state["searchString"])
+            ),
+            m(".actions-bar", [newConfig].concat(subs))
+          )
         ),
       ];
     },

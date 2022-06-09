@@ -86,12 +86,12 @@ function putActionHandler(action, _object, isNew): Promise<ValidationErrors> {
         .resourceExists("presets", id)
         .then((exists) => {
           if (exists && isNew) {
-            store.fulfill(0, Date.now());
+            store.setTimestamp(Date.now());
             return void resolve({ _id: "Preset already exists" });
           }
 
           if (!exists && !isNew) {
-            store.fulfill(0, Date.now());
+            store.setTimestamp(Date.now());
             return void resolve({ _id: "Preset does not exist" });
           }
 
@@ -102,8 +102,8 @@ function putActionHandler(action, _object, isNew): Promise<ValidationErrors> {
                 "success",
                 `Preset ${exists ? "updated" : "created"}`
               );
-              store.fulfill(0, Date.now());
-              resolve();
+              store.setTimestamp(Date.now());
+              resolve(null);
             })
             .catch(reject);
         })
@@ -113,12 +113,12 @@ function putActionHandler(action, _object, isNew): Promise<ValidationErrors> {
         .deleteResource("presets", object["_id"])
         .then(() => {
           notifications.push("success", "Preset deleted");
-          store.fulfill(0, Date.now());
-          resolve();
+          store.setTimestamp(Date.now());
+          resolve(null);
         })
         .catch((err) => {
           reject(err);
-          store.fulfill(0, Date.now());
+          store.setTimestamp(Date.now());
         });
     } else {
       reject(new Error("Undefined action"));
@@ -190,13 +190,9 @@ export const component: ClosureComponent = (): Component => {
       }
 
       function onSortChange(sortAttrs): void {
-        const _sort = Object.assign({}, sort);
-        for (const [index, direction] of Object.entries(sortAttrs)) {
-          // Changing the priority of columns
-          delete _sort[attributes[index].id];
-          _sort[attributes[index].id] = direction;
-        }
-
+        const _sort = {};
+        for (const index of sortAttrs)
+          _sort[attributes[Math.abs(index) - 1].id] = Math.sign(index);
         const ops = { sort: JSON.stringify(_sort) };
         if (vnode.attrs["filter"]) ops["filter"] = vnode.attrs["filter"];
         m.route.set("/admin/presets", ops);
@@ -294,7 +290,7 @@ export const component: ClosureComponent = (): Component => {
                     {
                       base: preset,
                       actionHandler: (action, object) => {
-                        return new Promise((resolve) => {
+                        return new Promise<void>((resolve) => {
                           putActionHandler(action, object, false)
                             .then((errors) => {
                               const errorList = errors
@@ -323,7 +319,7 @@ export const component: ClosureComponent = (): Component => {
                     return m(
                       "div",
                       { style: "margin:20px" },
-                      "This UI only supports presets with a single 'provision' configuraiton. If this preset was originally created from the old UI (genieacs-gui), you must edit it there."
+                      "This UI only supports presets with a single 'provision' configuration. If this preset was originally created from the old UI (genieacs-gui), you must edit it there."
                     );
                   }
                   return comp;
@@ -331,7 +327,7 @@ export const component: ClosureComponent = (): Component => {
                 overlay.open(
                   cb,
                   () =>
-                    !comp.state["current"]["modified"] ||
+                    !comp.state?.["current"]["modified"] ||
                     confirm("You have unsaved changes. Close anyway?")
                 );
               },
@@ -355,7 +351,7 @@ export const component: ClosureComponent = (): Component => {
                     Object.assign(
                       {
                         actionHandler: (action, object) => {
-                          return new Promise((resolve) => {
+                          return new Promise<void>((resolve) => {
                             putActionHandler(action, object, true)
                               .then((errors) => {
                                 const errorList = errors
@@ -413,11 +409,11 @@ export const component: ClosureComponent = (): Component => {
                         "success",
                         `${res.length} presets deleted`
                       );
-                      store.fulfill(0, Date.now());
+                      store.setTimestamp(Date.now());
                     })
                     .catch((err) => {
                       notifications.push("error", err.message);
-                      store.fulfill(0, Date.now());
+                      store.setTimestamp(Date.now());
                     });
                 },
               },
@@ -427,15 +423,20 @@ export const component: ClosureComponent = (): Component => {
         };
       }
 
-      const filterAttrs = {};
-      filterAttrs["resource"] = "presets";
-      filterAttrs["filter"] = vnode.attrs["filter"];
-      filterAttrs["onChange"] = onFilterChanged;
+      const filterAttrs = {
+        resource: "presets",
+        filter: vnode.attrs["filter"],
+        onChange: onFilterChanged,
+      };
 
       return [
         m("h1", "Listing presets"),
         m(filterComponent, filterAttrs),
-        m(indexTableComponent, attrs),
+        m(
+          "loading",
+          { queries: [presets, count] },
+          m(indexTableComponent, attrs)
+        ),
       ];
     },
   };

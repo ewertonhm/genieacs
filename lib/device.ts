@@ -54,13 +54,6 @@ export function sanitizeParameterValue(
           else parameterValue[0] = b;
         }
         break;
-      case "xsd:string":
-      case "xsd:base64":
-      case "xsd:hexBinary":
-        if (typeof parameterValue[0] !== "string")
-          parameterValue[0] = "" + parameterValue[0];
-
-        break;
       case "xsd:int":
       case "xsd:unsignedInt":
         if (typeof parameterValue[0] !== "number") {
@@ -83,7 +76,7 @@ export function sanitizeParameterValue(
         }
         break;
       default:
-        parameterValue[0] = JSON.parse(JSON.stringify(parameterValue[0]));
+        parameterValue[0] = "" + parameterValue[0];
         break;
     }
   }
@@ -208,7 +201,7 @@ export function clear(
   timestamp = timestamp || 0;
 
   let descendantsTimestamp = timestamp;
-  if (attributes && attributes.object) {
+  if (attributes?.object) {
     if (attributes.object > descendantsTimestamp)
       descendantsTimestamp = attributes.object;
     if (!(attributes.object <= attributes.value))

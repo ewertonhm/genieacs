@@ -130,6 +130,15 @@ export function evaluateCallback(exp: Expression): Expression {
     } else if (exp[1] === "LOWER") {
       if (exp[2] == null) return null;
       if (!isArray(exp[2])) return toString(exp[2]).toLowerCase();
+    } else if (exp[1] === "ROUND") {
+      const n = exp[2];
+      const p = exp.length > 3 ? exp[3] : 0;
+      if (n == null || p == null) return null;
+      if (!isArray(n) && !isArray(p)) {
+        const d = 10 ** p;
+        const m = n * d * (1 + Number.EPSILON);
+        return Math.round(m) / d;
+      }
     }
   } else if (exp[0] === "PARAM") {
     if (exp[1] == null) return null;
@@ -169,11 +178,11 @@ export function evaluateCallback(exp: Expression): Expression {
   } else if (exp[0] === "IS NULL") {
     if (isArray(exp[1])) return exp;
     else if (exp[1] == null) return true;
-    else return null;
+    else return false;
   } else if (exp[0] === "IS NOT NULL") {
     if (isArray(exp[1])) return exp;
     else if (exp[1] != null) return true;
-    else return null;
+    else return false;
   } else if (exp[0] === "LIKE") {
     if (isArray(exp[1]) || isArray(exp[2]) || isArray(exp[3])) return exp;
     else if (
@@ -235,9 +244,12 @@ export function evaluateCallback(exp: Expression): Expression {
   } else if (exp[0] === "/") {
     return reduce(exp, (a, b, i) => {
       if (a == null || b == null) return null;
-      if (!isArray(a) && !isArray(b))
-        return i === 0 ? toNumber(a) / toNumber(b) : toNumber(a) * toNumber(b);
-      return REDUCE_SKIP;
+      if (isArray(a) || isArray(b)) return REDUCE_SKIP;
+      const n1 = toNumber(a);
+      const n2 = toNumber(b);
+      if (i !== 0) return n1 * n2;
+      if (n2 === 0) return null;
+      return n1 / n2;
     });
   } else if (exp[0] === "+") {
     return reduce(exp, (a, b) => {
@@ -251,6 +263,15 @@ export function evaluateCallback(exp: Expression): Expression {
       if (!isArray(a) && !isArray(b))
         return i === 0 ? toNumber(a) - toNumber(b) : toNumber(a) + toNumber(b);
       return REDUCE_SKIP;
+    });
+  } else if (exp[0] === "%") {
+    return reduce(exp, (a, b, i) => {
+      if (a == null || b == null) return null;
+      if (isArray(a) || isArray(b) || i !== 0) return REDUCE_SKIP;
+      const n1 = toNumber(a);
+      const n2 = Math.trunc(toNumber(b));
+      if (n2 === 0) return null;
+      return n1 % n2;
     });
   } else if (exp[0] === "||") {
     return reduce(exp, (a, b) => {
@@ -325,15 +346,7 @@ export async function evaluateAsync(
     if (!isArray(e)) return e;
 
     if (e[0] === "FUNC") {
-      if (e[1] === "NOW") {
-        if (now) return now;
-      } else if (e[1] === "UPPER") {
-        if (e[2] == null) return null;
-        if (!isArray(e[2])) return `${e[2]}`.toUpperCase();
-      } else if (e[1] === "LOWER") {
-        if (e[2] == null) return null;
-        if (!isArray(e[2])) return `${e[2]}`.toLowerCase();
-      }
+      if (e[1] === "NOW") if (now) return now;
     } else if (e[0] === "PARAM") {
       if (e[1] == null) return null;
       if (obj && !isArray(e[1])) {

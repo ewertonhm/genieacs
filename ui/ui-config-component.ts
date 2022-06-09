@@ -17,7 +17,7 @@
  * along with GenieACS.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-import { ClosureComponent, Component } from "mithril";
+import { ClosureComponent } from "mithril";
 import { m } from "./components";
 import * as store from "./store";
 import { yaml } from "./dynamic-loader";
@@ -55,7 +55,8 @@ function putActionHandler(prefix: string[], dataYaml: string): Promise<any> {
           for (const f of res) current[f._id] = f.value;
 
           const diff = configFunctions.diffConfig(current, updated);
-          if (!diff.add.length && !diff.remove.length) return void resolve();
+          if (!diff.add.length && !diff.remove.length)
+            return void resolve(null);
 
           const promises = [];
 
@@ -64,7 +65,7 @@ function putActionHandler(prefix: string[], dataYaml: string): Promise<any> {
               store.putResource(
                 "config",
                 obj._id,
-                (obj as unknown) as Record<string, unknown>
+                obj as unknown as Record<string, unknown>
               )
             );
           }
@@ -74,7 +75,7 @@ function putActionHandler(prefix: string[], dataYaml: string): Promise<any> {
 
           Promise.all(promises)
             .then(() => {
-              resolve();
+              resolve(null);
             })
             .catch(reject);
         })
@@ -85,12 +86,20 @@ function putActionHandler(prefix: string[], dataYaml: string): Promise<any> {
   });
 }
 
-const component: ClosureComponent = (): Component => {
+interface Attrs {
+  prefix: string;
+  name: string;
+  data: { _id: string; value: string }[];
+  onUpdate: (errs: Record<string, string>) => void;
+  onError: (err: Error) => void;
+}
+
+const component: ClosureComponent<Attrs> = () => {
   return {
     view: (vnode) => {
-      const prefix = vnode.attrs["prefix"].split(".");
-      const name = vnode.attrs["name"];
-      const data = vnode.attrs["data"];
+      const prefix = vnode.attrs.prefix.split(".");
+      const name = vnode.attrs.name;
+      const data = vnode.attrs.data;
 
       if (prefix[prefix.length - 1] === "") prefix.pop();
 
@@ -134,8 +143,8 @@ const component: ClosureComponent = (): Component => {
                 vnode.state["updatedYaml"] = yamlString;
 
               putActionHandler(prefix, vnode.state["updatedYaml"])
-                .then(vnode.attrs["onUpdate"])
-                .catch(vnode.attrs["onError"]);
+                .then(vnode.attrs.onUpdate)
+                .catch(vnode.attrs.onError);
             },
           },
           [code, m(".actions-bar", [submit])]

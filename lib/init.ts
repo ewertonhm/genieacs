@@ -59,7 +59,7 @@ const INFORM_SCRIPT = `
 // Device ID as user name
 const username = declare("DeviceID.ID", {value: 1}).value[0]
 
-// Password will be fixed a given device because Math.random() is seeded with devcie ID by default.
+// Password will be fixed for a given device because Math.random() is seeded with device ID by default.
 const password = Math.trunc(Math.random() * Number.MAX_SAFE_INTEGER).toString(36);
 
 const informInterval = 300;
@@ -258,7 +258,7 @@ export async function seed(options: Record<string, boolean>): Promise<void> {
           "InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.KeyPassphrase",
       },
       { _id: "ui.device.3.type", value: "'parameter-table'" },
-      { _id: "ui.device.3.label", value: "'WLAN hosts'" },
+      { _id: "ui.device.3.label", value: "'LAN hosts'" },
       {
         _id: "ui.device.3.parameter",
         value: "InternetGatewayDevice.LANDevice.1.Hosts.Host",

@@ -23,13 +23,13 @@ type AutocompleteCallback = (
 ) => void;
 
 export default class Autocomplete {
-  private callback: AutocompleteCallback;
-  private element: HTMLInputElement;
-  private hideTimeout: NodeJS.Timeout;
-  private visible: boolean;
-  private default: string;
-  private selection: number;
-  private container: HTMLElement;
+  private declare callback: AutocompleteCallback;
+  private declare element: HTMLInputElement;
+  private declare hideTimeout: NodeJS.Timeout;
+  private declare visible: boolean;
+  private declare default: string;
+  private declare selection: number;
+  private declare container: HTMLElement;
 
   public constructor(className: string, callback: AutocompleteCallback) {
     this.callback = callback;
@@ -51,11 +51,8 @@ export default class Autocomplete {
 
     el.addEventListener("focus", () => {
       this.element = el;
-      const domRect = el.getBoundingClientRect();
-      this.container.style.left = `${domRect.left + window.pageXOffset}px`;
-      this.container.style.width = `${domRect.width}px`;
-      this.container.style.top = `${domRect.bottom + window.pageYOffset}px`;
       this.update();
+      this.reposition();
     });
 
     el.addEventListener("blur", () => {
@@ -71,7 +68,8 @@ export default class Autocomplete {
       } else if (e.key === "Enter") {
         if (this.default != null) {
           el.value = this.default;
-          e.preventDefault();
+          e.stopImmediatePropagation();
+          el.dispatchEvent(new InputEvent("input"));
           this.update();
         }
       } else if (e.key === "ArrowDown") {
@@ -91,6 +89,19 @@ export default class Autocomplete {
       this.selection = null;
       this.update();
     });
+  }
+
+  public reposition(): void {
+    if (!this.element) return;
+    const domRect = this.element.getBoundingClientRect();
+    if (!domRect.width) {
+      // Element has been removed
+      if (this.visible) this.hide();
+      return;
+    }
+    this.container.style.left = `${domRect.left + window.pageXOffset}px`;
+    this.container.style.width = `${domRect.width}px`;
+    this.container.style.top = `${domRect.bottom + window.pageYOffset}px`;
   }
 
   private hide(): void {
@@ -159,6 +170,7 @@ export default class Autocomplete {
         e.addEventListener("mousedown", (ev) => {
           ev.preventDefault();
           el.value = suggestion.value;
+          el.dispatchEvent(new InputEvent("input"));
           if (this.element === el) this.update();
         });
         this.container.appendChild(e);

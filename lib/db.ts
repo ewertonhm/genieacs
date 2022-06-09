@@ -19,7 +19,7 @@
 
 import { MongoClient, ObjectID, Collection, Db, GridFSBucket } from "mongodb";
 import { get } from "./config";
-import { encodeTag, escapeRegExp } from "./common";
+import { decodeTag, encodeTag, escapeRegExp } from "./common";
 import { parse } from "./common/expression-parser";
 import {
   DeviceData,
@@ -48,6 +48,8 @@ export let tasksCollection: Collection,
 
 let clientPromise: Promise<MongoClient>;
 
+const INVALID_PATH_SUFFIX = "__invalid";
+
 function compareAccessLists(list1: string[], list2: string[]): boolean {
   if (list1.length !== list2.length) return false;
   for (const [i, v] of list1.entries()) if (v !== list2[i]) return false;
@@ -61,10 +63,7 @@ export function onConnect(callback: (db: Db) => Promise<void>): void {
 }
 
 export async function connect(): Promise<void> {
-  clientPromise = MongoClient.connect("" + get("MONGODB_CONNECTION_URL"), {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-  });
+  clientPromise = MongoClient.connect("" + get("MONGODB_CONNECTION_URL"));
 
   const client = await clientPromise;
   const db = client.db();
@@ -96,7 +95,9 @@ export async function disconnect(): Promise<void> {
 
 // Optimize projection by removing overlaps
 // This can modify the object
-function optimizeProjection(obj: { [path: string]: 1 }): { [path: string]: 1 } {
+export function optimizeProjection(obj: { [path: string]: 1 }): {
+  [path: string]: 1;
+} {
   if (obj[""]) return { "": obj[""] };
 
   const keys = Object.keys(obj).sort();
@@ -135,7 +136,12 @@ export async function fetchDevice(
   const device = await devicesCollection.findOne({ _id: id });
   if (!device) return null;
 
-  function storeParams(obj, path: string, pathLength: number, ts): void {
+  function storeParams(
+    obj,
+    path: string,
+    pathLength: number,
+    ts: number
+  ): void {
     if (obj["_timestamp"]) obj["_timestamp"] = +obj["_timestamp"];
     if (obj["_attributesTimestamp"])
       obj["_attributesTimestamp"] = +obj["_attributesTimestamp"];
@@ -146,7 +152,7 @@ export async function fetchDevice(
 
     if (obj["_value"] != null) {
       attrs.value = [obj["_timestamp"] || 1, [obj["_value"], obj["_type"]]];
-      if (obj["_type"] === "xsd:dateTime")
+      if (obj["_type"] === "xsd:dateTime" && obj["_value"] instanceof Date)
         attrs.value[1][0] = +attrs.value[1][0];
 
       obj["_object"] = false;
@@ -166,18 +172,33 @@ export async function fetchDevice(
     if (obj["_accessList"] != null)
       attrs.accessList = [obj["_attributesTimestamp"] || 1, obj["_accessList"]];
 
-    res.push([Path.parse(path.slice(0, -1)), t, attrs]);
+    try {
+      res.push([Path.parse(path), t, attrs]);
+    } catch (err) {
+      // The path parser is now more strict so we might be in a situation where
+      // the database contains invalid paths from before this change So here we
+      // encode the invalid characters.
+      const splits = path.split(".");
+      splits[splits.length - 1] =
+        encodeTag(splits[splits.length - 1]) + INVALID_PATH_SUFFIX;
+      path = splits.join(".");
+      res.push([Path.parse(path), t, attrs]);
+      return;
+    }
 
     for (const [k, v] of Object.entries(obj)) {
       if (!k.startsWith("_")) {
         obj["_object"] = true;
-        storeParams(v, path + k + ".", pathLength + 1, obj["_timestamp"]);
+        storeParams(v, `${path}.${k}`, pathLength + 1, obj["_timestamp"]);
       }
     }
 
-    if ((obj["_object"] || !pathLength) && obj["_timestamp"])
-      res.push([Path.parse(path + "*"), obj["_timestamp"]]);
+    if (obj["_object"] && obj["_timestamp"])
+      res.push([Path.parse(path + ".*"), obj["_timestamp"]]);
   }
+
+  const ts: number = device["_timestamp"] || 0;
+  if (ts) res.push([Path.parse("*"), ts]);
 
   for (const [k, v] of Object.entries(device)) {
     switch (k) {
@@ -306,10 +327,11 @@ export async function fetchDevice(
             },
           ]);
         }
+        break;
+      default:
+        if (!k.startsWith("_")) storeParams(v, k, 1, ts);
     }
   }
-
-  storeParams(device, "", 0, 0);
   return res;
 }
 
@@ -430,14 +452,18 @@ export async function saveDevice(
           if (value2 != null) {
             if (!update["$addToSet"]["_tags"])
               update["$addToSet"]["_tags"] = { $each: [] };
-            update["$addToSet"]["_tags"]["$each"].push(path.segments[1]);
+            update["$addToSet"]["_tags"]["$each"].push(
+              decodeTag(path.segments[1] as string)
+            );
           } else {
             if (!update["$pull"]["_tags"]) {
               update["$pull"]["_tags"] = {
                 $in: [],
               };
             }
-            update["$pull"]["_tags"]["$in"].push(path.segments[1]);
+            update["$pull"]["_tags"]["$in"].push(
+              decodeTag(path.segments[1] as string)
+            );
           }
         }
 
@@ -455,7 +481,16 @@ export async function saveDevice(
         }
 
         if (!diff[2]) {
-          update["$unset"][path.toString()] = 1;
+          let pathStr = path.toString();
+          // Paths with that suffix are encoded and need to be decoded
+          if (pathStr.endsWith(INVALID_PATH_SUFFIX)) {
+            const splits = pathStr.split(".");
+            splits[splits.length - 1] = decodeTag(
+              splits[splits.length - 1].slice(0, 0 - INVALID_PATH_SUFFIX.length)
+            );
+            pathStr = splits.join(".");
+          }
+          update["$unset"][pathStr] = 1;
           continue;
         }
 
@@ -491,7 +526,7 @@ export async function saveDevice(
 
                 break;
               case "object":
-                if (!diff[1] || !diff[1].object || object2 !== object1) {
+                if (!diff[1]?.object || object2 !== object1) {
                   update["$set"][
                     path.length ? path.toString() + "._object" : "_object"
                   ] = !!object2;
@@ -499,7 +534,7 @@ export async function saveDevice(
 
                 break;
               case "writable":
-                if (!diff[1] || !diff[1].writable || writable2 !== writable1) {
+                if (!diff[1]?.writable || writable2 !== writable1) {
                   update["$set"][
                     path.length ? path.toString() + "._writable" : "_writable"
                   ] = !!writable2;
@@ -520,9 +555,8 @@ export async function saveDevice(
                 }
 
                 if (attributesTimestamp2 !== attributesTimestamp1) {
-                  update["$set"][
-                    path.toString() + "._attributesTimestamp"
-                  ] = new Date(attributesTimestamp2);
+                  update["$set"][path.toString() + "._attributesTimestamp"] =
+                    new Date(attributesTimestamp2);
                 }
 
                 break;
@@ -540,9 +574,8 @@ export async function saveDevice(
                 }
 
                 if (attributesTimestamp2 !== attributesTimestamp1) {
-                  update["$set"][
-                    path.toString() + "._attributesTimestamp"
-                  ] = new Date(attributesTimestamp2);
+                  update["$set"][path.toString() + "._attributesTimestamp"] =
+                    new Date(attributesTimestamp2);
                 }
             }
           }
@@ -552,7 +585,7 @@ export async function saveDevice(
           for (const attrName of Object.keys(diff[1])) {
             if (
               diff[1][attrName][1] != null &&
-              (!diff[2] || !diff[2][attrName] || diff[2][attrName][1] == null)
+              diff[2]?.[attrName]?.[1] == null
             ) {
               const p = path.length ? path.toString() + "." : "";
               update["$unset"][`${p}_${attrName}`] = 1;
@@ -606,7 +639,7 @@ export async function saveDevice(
     upsert: isNew,
   });
 
-  if (result.result.n !== 1)
+  if (!result.matchedCount && !result.upsertedCount)
     throw new Error(`Device ${deviceId} not found in database`);
 
   if (update2) {
@@ -630,7 +663,7 @@ export async function getFaults(
     delete r.device;
     r.timestamp = +r.timestamp;
     r.provisions = JSON.parse(r.provisions);
-    faults[channel] = r;
+    faults[channel] = r as SessionFault;
   }
 
   return faults;
@@ -671,13 +704,13 @@ export async function getDueTasks(
     if (task.timestamp >= timestamp) return [tasks, +task.timestamp];
     task._id = String(task._id);
 
-    tasks.push(task);
+    tasks.push(task as Task);
 
     // For API compatibility
     if (task.name === "download" && task.file) {
       let q;
-      if (ObjectID.isValid(task.file))
-        q = { _id: { $in: [task.file, new ObjectID(task.file)] } };
+      if (ObjectId.isValid(task.file))
+        q = { _id: { $in: [task.file, new ObjectId(task.file)] } };
       else q = { _id: task.file };
 
       const res = await filesCollection.find(q).toArray();
@@ -698,7 +731,7 @@ export async function clearTasks(
   taskIds: string[]
 ): Promise<void> {
   await tasksCollection.deleteMany({
-    _id: { $in: taskIds.map((id) => new ObjectID(id)) },
+    _id: { $in: taskIds.map((id) => new ObjectId(id)) },
   });
 }
 
@@ -715,14 +748,14 @@ export async function getOperations(
     delete r._id;
     // Workaround for a bug in v1.2.1 where operation object is saved without deserialization
     if (typeof r.provisions !== "string") {
-      operations[commandKey] = r;
+      operations[commandKey] = r as Operation;
       continue;
     }
     r.timestamp = +r.timestamp;
     if (r.args) r.args = JSON.parse(r.args);
     r.provisions = JSON.parse(r.provisions);
     r.retries = JSON.parse(r.retries);
-    operations[commandKey] = r;
+    operations[commandKey] = r as Operation;
   }
   return operations;
 }
@@ -790,7 +823,7 @@ interface Permission {
 }
 
 export async function getPermissions(): Promise<Permission[]> {
-  return permissionsCollection.find().toArray();
+  return permissionsCollection.find().toArray() as unknown as Permission[];
 }
 
 interface User {
@@ -801,7 +834,7 @@ interface User {
 }
 
 export async function getUsers(): Promise<User[]> {
-  return usersCollection.find().toArray();
+  return usersCollection.find().toArray() as unknown as User[];
 }
 
 export async function deleteDeviceUploads(deviceId: string): Promise<void> {

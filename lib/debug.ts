@@ -17,16 +17,12 @@
  * along with GenieACS.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-import {
-  IncomingMessage,
-  ServerResponse,
-  ClientRequest,
-  RequestOptions,
-} from "http";
+import { IncomingMessage, ServerResponse, ClientRequest } from "http";
 import { Socket } from "net";
 import { appendFileSync } from "fs";
-import * as yaml from "yaml";
+import { stringify } from "./common/yaml";
 import * as config from "./config";
+import { getSocketEndpoints } from "./server";
 
 const DEBUG_FILE = "" + config.get("DEBUG_FILE");
 const DEBUG_FORMAT = "" + config.get("DEBUG_FORMAT");
@@ -50,13 +46,14 @@ export function incomingHttpRequest(
   if (!DEBUG_FILE) return;
   const now = new Date();
   const con = httpRequest.socket;
+  const socketEndpoints = getSocketEndpoints(con);
   const msg = {
     event: "incoming HTTP request",
     timestamp: now,
-    remoteAddress: con.remoteAddress,
+    remoteAddress: socketEndpoints.remoteAddress,
     deviceId: deviceId,
     connection: getConnectionTimestamp(con),
-    localPort: con.localPort,
+    localPort: socketEndpoints.localPort,
     method: httpRequest.method,
     url: httpRequest.url,
     headers: httpRequest.headers,
@@ -64,7 +61,7 @@ export function incomingHttpRequest(
   };
 
   if (DEBUG_FORMAT === "yaml")
-    appendFileSync(DEBUG_FILE, "---\n" + yaml.stringify(msg));
+    appendFileSync(DEBUG_FILE, "---\n" + stringify(msg));
   else if (DEBUG_FORMAT === "json")
     appendFileSync(DEBUG_FILE, JSON.stringify(msg) + "\n");
   else throw new Error(`Unrecognized DEBUG_FORMAT option`);
@@ -78,10 +75,11 @@ export function outgoingHttpResponse(
   if (!DEBUG_FILE) return;
   const now = new Date();
   const con = httpResponse.socket;
+  const socketEndpoints = getSocketEndpoints(con);
   const msg = {
     event: "outgoing HTTP response",
     timestamp: now,
-    remoteAddress: con.remoteAddress,
+    remoteAddress: socketEndpoints.remoteAddress,
     deviceId: deviceId,
     connection: getConnectionTimestamp(con),
     statusCode: httpResponse.statusCode,
@@ -90,7 +88,7 @@ export function outgoingHttpResponse(
   };
 
   if (DEBUG_FORMAT === "yaml")
-    appendFileSync(DEBUG_FILE, "---\n" + yaml.stringify(msg));
+    appendFileSync(DEBUG_FILE, "---\n" + stringify(msg));
   else if (DEBUG_FORMAT === "json")
     appendFileSync(DEBUG_FILE, JSON.stringify(msg) + "\n");
   else throw new Error(`Unrecognized DEBUG_FORMAT option`);
@@ -99,7 +97,8 @@ export function outgoingHttpResponse(
 export function outgoingHttpRequest(
   httpRequest: ClientRequest,
   deviceId: string,
-  options: RequestOptions,
+  method: "GET" | "PUT" | "POST" | "DELETE",
+  url: URL,
   body: string
 ): void {
   if (!DEBUG_FILE) return;
@@ -111,15 +110,15 @@ export function outgoingHttpRequest(
     remoteAddress: con.remoteAddress,
     deviceId: deviceId,
     connection: getConnectionTimestamp(con),
-    remotePort: options.port,
-    method: options.method || "GET",
-    url: options.path,
+    remotePort: url.port,
+    method: method,
+    url: url.pathname + url.search,
     headers: httpRequest.getHeaders(),
     body: body,
   };
 
   if (DEBUG_FORMAT === "yaml")
-    appendFileSync(DEBUG_FILE, "---\n" + yaml.stringify(msg));
+    appendFileSync(DEBUG_FILE, "---\n" + stringify(msg));
   else if (DEBUG_FORMAT === "json")
     appendFileSync(DEBUG_FILE, JSON.stringify(msg) + "\n");
   else throw new Error(`Unrecognized DEBUG_FORMAT option`);
@@ -128,7 +127,8 @@ export function outgoingHttpRequest(
 export function outgoingHttpRequestError(
   httpRequest: ClientRequest,
   deviceId: string,
-  options: RequestOptions,
+  method: "GET" | "PUT" | "POST" | "DELETE",
+  url: URL,
   err: Error
 ): void {
   if (!DEBUG_FILE) return;
@@ -136,18 +136,18 @@ export function outgoingHttpRequestError(
   const msg = {
     event: "outgoing HTTP request",
     timestamp: now,
-    remoteAddress: options.hostname,
+    remoteAddress: url.hostname,
     deviceId: deviceId,
     connection: null,
-    remotePort: options.port,
-    method: options.method,
-    url: options.path,
+    remotePort: url.port,
+    method: method,
+    url: url.pathname + url.search,
     headers: httpRequest.getHeaders(),
     error: err.message,
   };
 
   if (DEBUG_FORMAT === "yaml")
-    appendFileSync(DEBUG_FILE, "---\n" + yaml.stringify(msg));
+    appendFileSync(DEBUG_FILE, "---\n" + stringify(msg));
   else if (DEBUG_FORMAT === "json")
     appendFileSync(DEBUG_FILE, JSON.stringify(msg) + "\n");
   else throw new Error(`Unrecognized DEBUG_FORMAT option`);
@@ -173,7 +173,7 @@ export function incomingHttpResponse(
   };
 
   if (DEBUG_FORMAT === "yaml")
-    appendFileSync(DEBUG_FILE, "---\n" + yaml.stringify(msg));
+    appendFileSync(DEBUG_FILE, "---\n" + stringify(msg));
   else if (DEBUG_FORMAT === "json")
     appendFileSync(DEBUG_FILE, JSON.stringify(msg) + "\n");
   else throw new Error(`Unrecognized DEBUG_FORMAT option`);
@@ -197,7 +197,24 @@ export function outgoingUdpMessage(
   };
 
   if (DEBUG_FORMAT === "yaml")
-    appendFileSync(DEBUG_FILE, "---\n" + yaml.stringify(msg));
+    appendFileSync(DEBUG_FILE, "---\n" + stringify(msg));
+  else if (DEBUG_FORMAT === "json")
+    appendFileSync(DEBUG_FILE, JSON.stringify(msg) + "\n");
+  else throw new Error(`Unrecognized DEBUG_FORMAT option`);
+}
+
+export function clientError(remoteAddress: string, err: Error): void {
+  if (!DEBUG_FILE) return;
+  const now = new Date();
+  const msg = {
+    event: "client error",
+    timestamp: now,
+    remoteAddress: remoteAddress,
+    error: err.message,
+  };
+
+  if (DEBUG_FORMAT === "yaml")
+    appendFileSync(DEBUG_FILE, "---\n" + stringify(msg));
   else if (DEBUG_FORMAT === "json")
     appendFileSync(DEBUG_FILE, JSON.stringify(msg) + "\n");
   else throw new Error(`Unrecognized DEBUG_FORMAT option`);

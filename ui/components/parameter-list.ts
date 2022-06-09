@@ -19,6 +19,7 @@
 
 import { ClosureComponent, Component, VnodeDOM } from "mithril";
 import { m } from "../components";
+import { evaluateExpression } from "../store";
 
 const component: ClosureComponent = (): Component => {
   return {
@@ -26,18 +27,24 @@ const component: ClosureComponent = (): Component => {
       const device = vnode.attrs["device"];
 
       const rows = Object.values(vnode.attrs["parameters"]).map((parameter) => {
+        const type = evaluateExpression(parameter["type"], device);
         const p = m.context(
           {
             device: device,
             parameter: parameter["parameter"],
           },
-          parameter["type"] || "parameter",
+          (type as string) || "parameter",
           parameter
         );
 
         return m(
           "tr",
           {
+            oncreate: (vn) => {
+              (vn.dom as HTMLElement).style.display = (p as VnodeDOM).dom
+                ? ""
+                : "none";
+            },
             onupdate: (vn) => {
               (vn.dom as HTMLElement).style.display = (p as VnodeDOM).dom
                 ? ""
@@ -49,7 +56,11 @@ const component: ClosureComponent = (): Component => {
         );
       });
 
-      return m("table.parameter-list", rows);
+      return m(
+        "loading",
+        { queries: [vnode.attrs["deviceQuery"]] },
+        m("table.parameter-list", rows)
+      );
     },
   };
 };

@@ -85,12 +85,12 @@ function putActionHandler(action, _object, isNew): Promise<ValidationErrors> {
         .resourceExists("users", id)
         .then((exists) => {
           if (exists && isNew) {
-            store.fulfill(0, Date.now());
+            store.setTimestamp(Date.now());
             return void resolve({ _id: "User already exists" });
           }
 
           if (!exists && !isNew) {
-            store.fulfill(0, Date.now());
+            store.setTimestamp(Date.now());
             return void resolve({ _id: "User does not exist" });
           }
 
@@ -102,14 +102,14 @@ function putActionHandler(action, _object, isNew): Promise<ValidationErrors> {
                   .changePassword(id, password)
                   .then(() => {
                     notifications.push("success", "User created");
-                    store.fulfill(0, Date.now());
-                    resolve();
+                    store.setTimestamp(Date.now());
+                    resolve(null);
                   })
                   .catch(reject);
               } else {
                 notifications.push("success", "User updated");
-                store.fulfill(0, Date.now());
-                resolve();
+                store.setTimestamp(Date.now());
+                resolve(null);
               }
             })
             .catch(reject);
@@ -120,11 +120,11 @@ function putActionHandler(action, _object, isNew): Promise<ValidationErrors> {
         .deleteResource("users", object["_id"])
         .then(() => {
           notifications.push("success", "User deleted");
-          store.fulfill(0, Date.now());
-          resolve();
+          store.setTimestamp(Date.now());
+          resolve(null);
         })
         .catch((err) => {
-          store.fulfill(0, Date.now());
+          store.setTimestamp(Date.now());
           reject(err);
         });
     } else {
@@ -186,13 +186,9 @@ export const component: ClosureComponent = (): Component => {
       }
 
       function onSortChange(sortAttrs): void {
-        const _sort = Object.assign({}, sort);
-        for (const [index, direction] of Object.entries(sortAttrs)) {
-          // Changing the priority of columns
-          delete _sort[attributes[index].id];
-          _sort[attributes[index].id] = direction;
-        }
-
+        const _sort = {};
+        for (const index of sortAttrs)
+          _sort[attributes[Math.abs(index) - 1].id] = Math.sign(index);
         const ops = { sort: JSON.stringify(_sort) };
         if (vnode.attrs["filter"]) ops["filter"] = vnode.attrs["filter"];
         m.route.set("/admin/users", ops);
@@ -247,7 +243,7 @@ export const component: ClosureComponent = (): Component => {
                         roles: user.roles.split(","),
                       },
                       actionHandler: (action, object) => {
-                        return new Promise((resolve) => {
+                        return new Promise<void>((resolve) => {
                           putActionHandler(action, object, false)
                             .then((errors) => {
                               const errorList = errors
@@ -329,7 +325,7 @@ export const component: ClosureComponent = (): Component => {
                     Object.assign(
                       {
                         actionHandler: (action, object) => {
-                          return new Promise((resolve) => {
+                          return new Promise<void>((resolve) => {
                             putActionHandler(action, object, true)
                               .then((errors) => {
                                 const errorList = errors
@@ -387,11 +383,11 @@ export const component: ClosureComponent = (): Component => {
                         "success",
                         `${res.length} users deleted`
                       );
-                      store.fulfill(0, Date.now());
+                      store.setTimestamp(Date.now());
                     })
                     .catch((err) => {
                       notifications.push("error", err.message);
-                      store.fulfill(0, Date.now());
+                      store.setTimestamp(Date.now());
                     });
                 },
               },
@@ -401,15 +397,20 @@ export const component: ClosureComponent = (): Component => {
         };
       }
 
-      const filterAttrs = {};
-      filterAttrs["resource"] = "users";
-      filterAttrs["filter"] = vnode.attrs["filter"];
-      filterAttrs["onChange"] = onFilterChanged;
+      const filterAttrs = {
+        resource: "users",
+        filter: vnode.attrs["filter"],
+        onChange: onFilterChanged,
+      };
 
       return [
         m("h1", "Listing users"),
         m(filterComponent, filterAttrs),
-        m(indexTableComponent, attrs),
+        m(
+          "loading",
+          { queries: [users, count] },
+          m(indexTableComponent, attrs)
+        ),
       ];
     },
   };

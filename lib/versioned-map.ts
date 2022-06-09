@@ -26,10 +26,10 @@ interface Revisions<V> {
 }
 
 export default class VersionedMap<K, V> {
-  private _sizeDiff: number[];
-  private _revision: number;
-  private map: Map<K, (V | symbol)[]>;
-  public dirty: number;
+  private declare _sizeDiff: number[];
+  private declare _revision: number;
+  private declare map: Map<K, (V | symbol)[]>;
+  public declare dirty: number;
 
   public constructor() {
     this._sizeDiff = [0];
@@ -168,6 +168,7 @@ export default class VersionedMap<K, V> {
 
   public *diff(): IterableIterator<[K, V, V]> {
     for (const [key, revisions] of this.map) {
+      if (revisions.length === 1) continue;
       let first = revisions[0];
       let last = revisions[revisions.length - 1];
       if (first === NONEXISTENT && last === NONEXISTENT) continue;

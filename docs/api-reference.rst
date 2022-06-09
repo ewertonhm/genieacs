@@ -1,7 +1,7 @@
 API Reference
 =============
 
-GenieACS expoeses a rich RESTful API through its NBI component. This document
+GenieACS exposes a rich RESTful API through its NBI component. This document
 serves as a reference for the available APIs.
 
 This API makes use of MongoDB's query language in some of its endpoints. Refer
@@ -16,7 +16,7 @@ to MongoDB's documentation for details.
 
 .. warning::
 
-  A common pitfll is not properly percent-encoding special characters in the
+  A common pitfall is not properly percent-encoding special characters in the
   device ID or query in the URL.
 
 Endpoints
@@ -41,11 +41,11 @@ Examples
 
 .. code:: javascript
 
-  query = {"_id": "202BC1-BM632w-0000000"}
+  query = {"_id": "202BC1-BM632w-000000"}
 
 .. code:: bash
 
-  curl -i 'http://localhost:7557/devices/?query=%7B%22_id%22%3A%22202BC1-BM632w-0000000%22%7D'
+  curl -i 'http://localhost:7557/devices/?query=%7B%22_id%22%3A%22202BC1-BM632w-000000%22%7D'
 
 - Find a device by its MAC address:
 
@@ -77,21 +77,21 @@ Examples
 
 .. code:: javascript
 
-  query = {"device": "202BC1-BM632w-0000000"}
+  query = {"device": "202BC1-BM632w-000000"}
 
 .. code:: bash
 
-  curl -i 'http://localhost:7557/tasks/?query=%7B%22device%22%3A%22202BC1-BM632w-0000000%22%7D'
+  curl -i 'http://localhost:7557/tasks/?query=%7B%22device%22%3A%22202BC1-BM632w-000000%22%7D'
 
 - Return specific parameters for a given device:
 
 .. code:: javascript
 
-  query = {"_id": "202BC1-BM632w-0000000"}
+  query = {"_id": "202BC1-BM632w-000000"}
 
 .. code:: bash
 
-  curl -i 'http://localhost:7557/devices?query=%7B%22_id%22%3A%22202BC1-BM632w-0000000%22%7D&projection=InternetGatewayDevice.DeviceInfo.ModelName,InternetGatewayDevice.DeviceInfo.Manufacturer'
+  curl -i 'http://localhost:7557/devices?query=%7B%22_id%22%3A%22202BC1-BM632w-000000%22%7D&projection=InternetGatewayDevice.DeviceInfo.ModelName,InternetGatewayDevice.DeviceInfo.Manufacturer'
 
 The ``projection`` URL param is a comma-separated list of the parameters to receive.
 
@@ -106,7 +106,7 @@ if the tasks have been queued to be executed at the next inform.
 *device_id*: The ID of the device.
 
 *connection_request*: Indicates that a connection request will be triggered to
-execute the tasks immediatly. Otherwise, the tasks will be queued and be
+execute the tasks immediately. Otherwise, the tasks will be queued and be
 processed at the next inform.
 
 The response body is the task object as it is inserted in the database. The
@@ -120,7 +120,7 @@ Examples
 
 .. code:: bash
 
-  curl -i 'http://localhost:7557/devices/202BC1-BM632w-0000000/tasks?connection_request' \
+  curl -i 'http://localhost:7557/devices/202BC1-BM632w-000000/tasks?connection_request' \
   -X POST \
   --data '{"name": "refreshObject", "objectName": ""}'
 
@@ -138,7 +138,7 @@ Examples
 
 .. code:: bash
 
-  curl -i 'http://localhost:7557/devices/202BC1-BM632w-0000000/tasks?connection_request' \
+  curl -i 'http://localhost:7557/devices/202BC1-BM632w-000000/tasks?connection_request' \
   -X POST \
   --data '{"name":"setParameterValues", "parameterValues": [["InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID", "GenieACS", "xsd:string"],["InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.PreSharedKey", "hello world", "xsd:string"]]}'
 
@@ -183,7 +183,7 @@ Example
 
 .. code:: bash
 
-  curl -i 'http://localhost:7557/faults/202BC1-BM632w-0000000:default' -X DELETE
+  curl -i 'http://localhost:7557/faults/202BC1-BM632w-000000:default' -X DELETE
 
 DELETE /devices/\<device_id\>
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -218,7 +218,7 @@ Assign the tag "testing" to a device:
 
 .. code:: bash
 
-  curl -i 'http://localhost:7557/devices/202BC1-BM632w-0000000/tags/testing' -X POST
+  curl -i 'http://localhost:7557/devices/202BC1-BM632w-000000/tags/testing' -X POST
 
 DELETE /devices/\<device_id\>/tags/\<tag\>
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -236,7 +236,7 @@ Remove the tag "testing" from a device:
 
 .. code:: bash
 
-  curl -i 'http://localhost:7557/devices/202BC1-BM632w-0000000/tags/testing' -X DELETE
+  curl -i 'http://localhost:7557/devices/202BC1-BM632w-000000/tags/testing' -X DELETE
 
 PUT /presets/\<preset_name\>
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -299,7 +299,7 @@ The following file metadata may be sent as request headers:
 - ``fileType``: For firmware images it should be "1 Firmware Upgrade Image".
   Other common types are "2 Web Content" and "3 Vendor Configuration File".
 
-- ``oui``: The OUI of the device model that this file belogs to.
+- ``oui``: The OUI of the device model that this file belongs to.
 
 - ``productClass``: The product class of the device.
 
@@ -344,7 +344,7 @@ Find files using a query.
 Tasks
 -----
 
-Find the different availabe tasks and their object structure.
+Find the different available tasks and their object structure.
 
 ``getParameterValues``
 ~~~~~~~~~~~~~~~~~~~~~~

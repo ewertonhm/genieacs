@@ -23,6 +23,8 @@ import * as taskQueue from "../task-queue";
 import { parse } from "../../lib/common/expression-parser";
 import memoize from "../../lib/common/memoize";
 import { getIcon } from "../icons";
+import { evaluateExpression } from "../store";
+import debounce from "../../lib/common/debounce";
 
 const memoizedParse = memoize(parse);
 
@@ -51,27 +53,31 @@ function orderKeysByDepth(device: Record<string, unknown>): string[][] {
 }
 
 const component: ClosureComponent = (): Component => {
+  let queryString: string;
+  const formQueryString = debounce((args: string[]) => {
+    queryString = args[args.length - 1];
+    m.redraw();
+  }, 500);
+
   return {
     view: (vnode) => {
       const device = vnode.attrs["device"];
+
+      const limit = evaluateExpression(vnode.attrs["limit"], device) || 100;
 
       const search = m("input", {
         type: "text",
         placeholder: "Search parameters",
         oninput: (e) => {
-          vnode.state["searchString"] = e.target.value;
+          formQueryString(e.target.value);
           e.redraw = false;
-          clearTimeout(vnode.state["timeout"]);
-          vnode.state["timeout"] = setTimeout(m.redraw, 500);
         },
       });
 
       const instanceRegex = /\.[0-9]+$/;
       let re;
-      if (vnode.state["searchString"]) {
-        const keywords = vnode.state["searchString"]
-          .split(" ")
-          .filter((s) => s);
+      if (queryString) {
+        const keywords = queryString.split(" ").filter((s) => s);
         if (keywords.length)
           re = new RegExp(keywords.map((s) => escapeRegExp(s)).join(".*"), "i");
       }
@@ -83,10 +89,10 @@ const component: ClosureComponent = (): Component => {
         let c = 0;
         for (const k of keys) {
           const p = device[k];
-          const str = p.value && p.value[0] ? `${k} ${p.value[0]}` : k;
+          const str = p.value?.[0] ? `${k} ${p.value[0]}` : k;
           if (re && !re.test(str)) continue;
           ++c;
-          if (count < 100) filteredKeys.push(k);
+          if (count < limit) filteredKeys.push(k);
         }
         count += c;
       }
@@ -169,25 +175,29 @@ const component: ClosureComponent = (): Component => {
       });
 
       return m(
-        ".all-parameters",
+        "loading",
+        { queries: [vnode.attrs["deviceQuery"]] },
         m(
-          "a.download-csv",
-          {
-            href: `api/devices/${encodeURIComponent(
-              device["DeviceID.ID"].value[0]
-            )}.csv`,
-            download: "",
-            style: "float: right;",
-          },
-          "Download"
-        ),
-        search,
-        m(
-          ".parameter-list",
-          m("table", m("tbody", rows)),
+          ".all-parameters",
           m(
-            "m",
-            `Displaying ${filteredKeys.length} out of ${count} parameters.`
+            "a.download-csv",
+            {
+              href: `api/devices/${encodeURIComponent(
+                device["DeviceID.ID"].value[0]
+              )}.csv`,
+              download: "",
+              style: "float: right;",
+            },
+            "Download"
+          ),
+          search,
+          m(
+            ".parameter-list",
+            m("table", m("tbody", rows)),
+            m(
+              "m",
+              `Displaying ${filteredKeys.length} out of ${count} parameters.`
+            )
           )
         )
       );

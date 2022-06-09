@@ -64,7 +64,7 @@ CWMP_PORT
 CWMP_INTERFACE
   The network interface that genieacs-cwmp binds to.
 
-  Default: ``0.0.0.0``
+  Default: ``::``
 
 CWMP_SSL_CERT
   Path to certificate file. If omitted, non-secure HTTP will be used.
@@ -86,7 +86,7 @@ CWMP_ACCESS_LOG_FILE
   File to log incoming requests for genieacs-cwmp. If omitted, logs will go to
   stdout.
 
-  Default: unest
+  Default: unset
 
 NBI_WORKER_PROCESSES
   The number of worker processes to spawn for genieacs-nbi. A value of 0 means
@@ -102,12 +102,12 @@ NBI_PORT
 NBI_INTERFACE
   The network interface that genieacs-nbi binds to.
 
-  Default: ``0.0.0.0``
+  Default: ``::``
 
 NBI_SSL_CERT
   Path to certificate file. If omitted, non-secure HTTP will be used.
 
-  Default: unest
+  Default: unset
 
 NBI_SSL_KEY
   Path to certificate key file. If omitted, non-secure HTTP will be used.
@@ -140,7 +140,7 @@ FS_PORT
 FS_INTERFACE
   The network interface that genieacs-fs binds to.
 
-  Default: ``0.0.0.0``
+  Default: ``::``
 
 FS_SSL_CERT
   Path to certificate file. If omitted, non-secure HTTP will be used.
@@ -186,7 +186,7 @@ UI_PORT
 UI_INTERFACE
   The network interface that genieacs-ui binds to.
 
-  Default: ``0.0.0.0``
+  Default: ``::``
 
 UI_SSL_CERT
   Path to certificate file. If omitted, non-secure HTTP will be used.

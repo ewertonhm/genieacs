@@ -17,7 +17,7 @@
  * along with GenieACS.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-import { ObjectID } from "mongodb";
+import { ObjectId } from "mongodb";
 import * as db from "./db";
 import { del } from "../cache";
 import { getUsers } from "../local-cache";
@@ -38,7 +38,7 @@ async function deleteFault(id): Promise<void> {
   await Promise.all([
     db.deleteFault(id),
     channel.startsWith("task_")
-      ? db.deleteTask(new ObjectID(channel.slice(5)))
+      ? db.deleteTask(new ObjectId(channel.slice(5)))
       : null,
   ]);
 
@@ -112,7 +112,7 @@ export async function postTasks(
   const lastInform = Date.now();
   const notInSession = await awaitSessionEnd(deviceId, 30000);
   if (!notInSession) {
-    await Promise.all(statuses.map((t) => db.deleteTask(new ObjectID(t._id))));
+    await Promise.all(statuses.map((t) => db.deleteTask(new ObjectId(t._id))));
     return {
       connectionRequest: "Session took too long to complete",
       tasks: statuses,
@@ -124,7 +124,7 @@ export async function postTasks(
   const status = await connectionRequest(deviceId, device);
 
   if (status) {
-    await Promise.all(statuses.map((t) => db.deleteTask(new ObjectID(t._id))));
+    await Promise.all(statuses.map((t) => db.deleteTask(new ObjectId(t._id))));
     return {
       connectionRequest: status,
       tasks: statuses,
@@ -133,7 +133,7 @@ export async function postTasks(
 
   const sessionStarted = await awaitSessionStart(deviceId, lastInform, timeout);
   if (!sessionStarted) {
-    await Promise.all(statuses.map((t) => db.deleteTask(new ObjectID(t._id))));
+    await Promise.all(statuses.map((t) => db.deleteTask(new ObjectId(t._id))));
     return {
       connectionRequest: "No contact from CPE",
       tasks: statuses,
@@ -142,7 +142,7 @@ export async function postTasks(
 
   const sessionEnded = await awaitSessionEnd(deviceId, 120000);
   if (!sessionEnded) {
-    await Promise.all(statuses.map((t) => db.deleteTask(new ObjectID(t._id))));
+    await Promise.all(statuses.map((t) => db.deleteTask(new ObjectId(t._id))));
     return {
       connectionRequest: "Session took too long to complete",
       tasks: statuses,
@@ -167,7 +167,7 @@ export async function postTasks(
     }
   }
 
-  await Promise.all(statuses.map((t) => db.deleteTask(new ObjectID(t._id))));
+  await Promise.all(statuses.map((t) => db.deleteTask(new ObjectId(t._id))));
 
   return { connectionRequest: "OK", tasks: statuses };
 }
@@ -204,7 +204,7 @@ export function authLocal(
   return new Promise((resolve, reject) => {
     const users = getUsers(snapshot);
     const user = users[username];
-    if (!user || !user.password) return void resolve(null);
+    if (!user?.password) return void resolve(null);
     hashPassword(password, user.salt)
       .then((hash) => {
         if (hash === user.password) resolve(true);

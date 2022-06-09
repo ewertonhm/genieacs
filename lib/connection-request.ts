@@ -19,7 +19,7 @@
 
 import * as crypto from "crypto";
 import * as dgram from "dgram";
-import { parse } from "url";
+import { URL } from "url";
 import * as http from "http";
 import { evaluateAsync } from "./common/expression";
 import { Expression } from "./types";
@@ -61,24 +61,26 @@ async function extractAuth(
 }
 
 function httpGet(
+  url: URL,
   options: http.RequestOptions,
   _debug: boolean,
   deviceId: string
 ): Promise<{ statusCode: number; headers: http.IncomingHttpHeaders }> {
   return new Promise((resolve, reject) => {
     const req = http
-      .get(options, (res) => {
+      .get(url, options, (res) => {
         res.resume();
         resolve({ statusCode: res.statusCode, headers: res.headers });
         if (_debug) {
-          debug.outgoingHttpRequest(req, deviceId, options, null);
+          debug.outgoingHttpRequest(req, deviceId, "GET", url, null);
           debug.incomingHttpResponse(res, deviceId, null);
         }
       })
       .on("error", (err) => {
         req.destroy();
         reject(err);
-        if (_debug) debug.outgoingHttpRequestError(req, deviceId, options, err);
+        if (_debug)
+          debug.outgoingHttpRequestError(req, deviceId, "GET", url, err);
       })
       .on("timeout", () => {
         req.destroy();
@@ -94,15 +96,13 @@ export async function httpConnectionRequest(
   _debug: boolean,
   deviceId: string
 ): Promise<string> {
-  const options: http.RequestOptions = parse(address);
-  if (options.protocol !== "http:")
+  const url = new URL(address);
+  if (url.protocol !== "http:")
     return "Invalid connection request URL or protocol";
 
-  options.agent = new http.Agent({
-    maxSockets: 1,
-    keepAlive: true,
-    timeout: timeout,
-  });
+  const options: http.RequestOptions = {
+    agent: new http.Agent({ maxSockets: 1, keepAlive: true, timeout: timeout }),
+  };
 
   let authHeader: Record<string, string>;
   let username: string;
@@ -129,7 +129,7 @@ export async function httpConnectionRequest(
               Authorization: auth.solveDigest(
                 username,
                 password,
-                options.path,
+                url.pathname + url.search,
                 "GET",
                 null,
                 authHeader
@@ -145,12 +145,12 @@ export async function httpConnectionRequest(
 
     let res: { statusCode: number; headers: http.IncomingHttpHeaders };
     try {
-      res = await httpGet(opts, _debug, deviceId);
+      res = await httpGet(url, opts, _debug, deviceId);
     } catch (err) {
       // Workaround for some devices unexpectedly closing the connection
       if (authHeader) {
         try {
-          res = await httpGet(opts, _debug, deviceId);
+          res = await httpGet(url, opts, _debug, deviceId);
         } catch (err) {
           return `Connection request error: ${err.message}`;
         }
@@ -169,9 +169,13 @@ export async function httpConnectionRequest(
     if (res.statusCode === 503) return "Device is offline";
 
     if (res.statusCode === 401 && res.headers["www-authenticate"]) {
-      authHeader = auth.parseWwwAuthenticateHeader(
-        res.headers["www-authenticate"]
-      );
+      try {
+        authHeader = auth.parseWwwAuthenticateHeader(
+          res.headers["www-authenticate"]
+        );
+      } catch (err) {
+        return "Connection request error: Error parsing www-authenticate header";
+      }
       [username, password, authExp] = await extractAuth(authExp, false);
     } else {
       return `Connection request error: Unexpected status code ${res.statusCode}`;
@@ -182,14 +186,13 @@ export async function httpConnectionRequest(
 }
 
 export async function udpConnectionRequest(
-  address: string,
+  host: string,
+  port: number,
   authExp: Expression,
   sourcePort = 0,
   _debug: boolean,
   deviceId: string
 ): Promise<void> {
-  const [host, portStr] = address.split(":", 2);
-  const port = portStr ? parseInt(portStr) : 80;
   const now = Date.now();
 
   const client = dgram.createSocket({ type: "udp4", reuseAddr: true });
@@ -216,12 +219,12 @@ export async function udpConnectionRequest(
       .createHmac("sha1", password)
       .update(`${ts}${id}${username}${cn}`)
       .digest("hex");
-    const uri = `http://${address}?ts=${ts}&id=${id}&un=${username}&cn=${cn}&sig=${sig}`;
-    const msg = `GET ${uri} HTTP/1.1\r\nHost: ${address}\r\n\r\n`;
+    const uri = `http://${host}:${port}?ts=${ts}&id=${id}&un=${username}&cn=${cn}&sig=${sig}`;
+    const msg = `GET ${uri} HTTP/1.1\r\nHost: ${host}:${port}\r\n\r\n`;
     const message = Buffer.from(msg);
 
     for (let i = 0; i < 3; ++i) {
-      await new Promise((resolve, reject) => {
+      await new Promise<void>((resolve, reject) => {
         client.send(message, 0, message.length, port, host, (err: Error) => {
           if (err) reject(err);
           else resolve();

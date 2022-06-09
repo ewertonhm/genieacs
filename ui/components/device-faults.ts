@@ -22,6 +22,7 @@ import { m } from "../components";
 import * as store from "../store";
 import * as notifications from "../notifications";
 import { getIcon } from "../icons";
+import { stringify } from "../../lib/common/yaml";
 
 const component: ClosureComponent = (): Component => {
   return {
@@ -38,6 +39,7 @@ const component: ClosureComponent = (): Component => {
         "Channel",
         "Code",
         "Message",
+        "Detail",
         "Retries",
         "Timestamp",
       ].map((l) => m("th", l));
@@ -48,7 +50,9 @@ const component: ClosureComponent = (): Component => {
         rows.push([
           m("td", f["channel"]),
           m("td", f["code"]),
-          m("td", f["message"]),
+          m("td", m("long-text", { text: f["message"] })),
+          m("td", m("long-text", { text: stringify(f["detail"]) })),
+
           m("td", f["retries"]),
           m("td", new Date(f["timestamp"]).toLocaleString()),
           m(
@@ -63,12 +67,12 @@ const component: ClosureComponent = (): Component => {
                     .deleteResource("faults", f["_id"])
                     .then(() => {
                       notifications.push("success", "Fault deleted");
-                      store.fulfill(Date.now(), Date.now());
+                      store.setTimestamp(Date.now());
                       m.redraw();
                     })
                     .catch((err) => {
                       notifications.push("error", err.message);
-                      store.fulfill(Date.now(), Date.now());
+                      store.setTimestamp(Date.now());
                     });
                 },
               },
@@ -91,7 +95,11 @@ const component: ClosureComponent = (): Component => {
         );
       }
 
-      return m("table.table", thead, tbody);
+      return m(
+        "loading",
+        { queries: [faults] },
+        m("table.table", thead, tbody)
+      );
     },
   };
 };

@@ -17,13 +17,13 @@
  * along with GenieACS.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-import { Db, GridFSBucket, ObjectID } from "mongodb";
+import { Db, GridFSBucket, ObjectId } from "mongodb";
 import { Script } from "vm";
-import { onConnect } from "../db";
+import { onConnect, optimizeProjection } from "../db";
 import * as mongodbFunctions from "../mongodb-functions";
 import * as expression from "../common/expression";
 import { QueryOptions, Expression } from "../types";
-import { Readable } from "stream";
+import { Readable, Writable } from "stream";
 import { minimize } from "../common/boolean-expression";
 
 const RESOURCE_COLLECTION = {
@@ -40,9 +40,20 @@ onConnect(async (_db) => {
 export function query(
   resource: string,
   filter: Expression,
+  options?: QueryOptions
+): Promise<any[]>;
+export function query(
+  resource: string,
+  filter: Expression,
+  options: QueryOptions,
+  callback: (doc: any) => void
+): Promise<void>;
+export function query(
+  resource: string,
+  filter: Expression,
   options?: QueryOptions,
   callback?: (doc: any) => void
-): Promise<any[]> {
+): Promise<void | any[]> {
   options = options || {};
   let q;
   filter = expression.evaluate(filter, null, Date.now());
@@ -79,6 +90,7 @@ export function query(
       }
 
       if (resource === "presets") projection.configurations = 1;
+      projection = optimizeProjection(projection);
       cursor.project(projection);
     }
 
@@ -184,8 +196,8 @@ export async function updateDeviceTags(
   const collection = db.collection("devices");
   const object = {};
 
-  if (add && add.length) object["$addToSet"] = { _tags: { $each: add } };
-  if (pull && pull.length) object["$pullAll"] = { _tags: pull };
+  if (add?.length) object["$addToSet"] = { _tags: { $each: add } };
+  if (pull?.length) object["$pullAll"] = { _tags: pull };
 
   await collection.updateOne({ _id: deviceId }, object);
 }
@@ -202,7 +214,7 @@ function putResource(resource, id, object): Promise<void> {
 
 function deleteResource(
   resource: string,
-  id: string | ObjectID
+  id: string | ObjectId
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const collection = db.collection(RESOURCE_COLLECTION[resource] || resource);
@@ -231,9 +243,17 @@ export function putProvision(
 ): Promise<void> {
   if (!object.script) object.script = "";
   try {
-    new Script(`"use strict";(function(){\n${object.script}\n})();`);
-  } catch (error) {
-    return Promise.reject(error);
+    new Script(`"use strict";(function(){\n${object.script}\n})();`, {
+      filename: id,
+      lineOffset: -1,
+    });
+  } catch (err) {
+    if (err.stack?.startsWith(`${id}:`)) {
+      return Promise.reject(
+        new Error(`${err.name} at ${err.stack.split("\n", 1)[0]}`)
+      );
+    }
+    return Promise.reject(err);
   }
   return putResource("provisions", id, object);
 }
@@ -248,9 +268,17 @@ export function putVirtualParameter(
 ): Promise<void> {
   if (!object.script) object.script = "";
   try {
-    new Script(`"use strict";(function(){\n${object.script}\n})();`);
-  } catch (error) {
-    return Promise.reject(error);
+    new Script(`"use strict";(function(){\n${object.script}\n})();`, {
+      filename: id,
+      lineOffset: -1,
+    });
+  } catch (err) {
+    if (err.stack?.startsWith(`${id}:`)) {
+      return Promise.reject(
+        new Error(`${err.name} at ${err.stack.split("\n", 1)[0]}`)
+      );
+    }
+    return Promise.reject(err);
   }
   return putResource("virtualParameters", id, object);
 }
@@ -304,6 +332,11 @@ export function deleteUser(id: string): Promise<void> {
   return deleteResource("users", id);
 }
 
+export function downloadFile(filename: string): Readable {
+  const bucket = new GridFSBucket(db);
+  return bucket.openDownloadStreamByName(filename);
+}
+
 export function putFile(
   filename: string,
   metadata: Record<string, string>,
@@ -311,13 +344,17 @@ export function putFile(
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const bucket = new GridFSBucket(db);
-    const uploadStream = bucket.openUploadStreamWithId(filename, filename, {
-      metadata: metadata,
-    });
+    const uploadStream = bucket.openUploadStreamWithId(
+      filename as unknown as ObjectId,
+      filename,
+      {
+        metadata: metadata,
+      }
+    );
     uploadStream.on("error", reject);
     contentStream.on("error", reject);
     uploadStream.on("finish", resolve);
-    contentStream.pipe(uploadStream);
+    contentStream.pipe(uploadStream as Writable);
   });
 }
 
@@ -345,6 +382,6 @@ export function deleteFault(id: string): Promise<void> {
   return deleteResource("faults", id);
 }
 
-export function deleteTask(id: ObjectID): Promise<void> {
+export function deleteTask(id: ObjectId): Promise<void> {
   return deleteResource("tasks", id);
 }

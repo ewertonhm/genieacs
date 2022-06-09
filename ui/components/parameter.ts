@@ -38,7 +38,7 @@ const evaluateParam = memoize((exp, obj, now: number) => {
       ) {
         let v = null;
         const p = obj[e[i][1]];
-        if (p && p.value) {
+        if (p?.value) {
           v = p.value[0];
           timestamp = Math.min(timestamp, p.valueTimestamp);
         }
@@ -58,10 +58,12 @@ const evaluateParam = memoize((exp, obj, now: number) => {
     value = exp;
   } else if (exp[0] === "PARAM") {
     const p = obj[exp[1]];
-    if (p && p.value) {
+    if (p?.value) {
       timestamp = p.valueTimestamp;
       value = p.value[0];
       parameter = exp[1];
+      if (p.value[1] === "xsd:dateTime" && typeof value === "number")
+        value = new Date(value).toLocaleString();
     }
   }
 
@@ -75,14 +77,14 @@ const component: ClosureComponent = (): Component => {
 
       const { value, timestamp, parameter } = evaluateParam(
         vnode.attrs["parameter"],
-        vnode.attrs["device"],
-        store.getTimestamp()
+        device,
+        store.getTimestamp() + store.getClockSkew()
       );
 
       if (value == null) return null;
 
       let edit;
-      if (device[parameter] && device[parameter].writable) {
+      if (device[parameter]?.writable) {
         edit = m(
           "button",
           {
@@ -115,7 +117,7 @@ const component: ClosureComponent = (): Component => {
             e.redraw = false;
             // Don't update any child element
             if (e.target === (el as VnodeDOM).dom) {
-              const now = Date.now();
+              const now = Date.now() + store.getClockSkew();
               const localeString = new Date(timestamp).toLocaleString();
               e.target.title = `${localeString} (${timeAgo(now - timestamp)})`;
             }

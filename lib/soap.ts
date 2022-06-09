@@ -110,8 +110,8 @@ function event(xml: Element): string[] {
 
 function parameterInfoList(xml: Element): [Path, boolean, boolean][] {
   return xml.children
-    .filter((e) => e.localName === "ParameterInfoStruct")
     .map<[Path, boolean, boolean]>((e) => {
+      if (e.localName !== "ParameterInfoStruct") return null;
       let param: string, value: string;
       for (const c of e.children) {
         switch (c.localName) {
@@ -135,10 +135,20 @@ function parameterInfoList(xml: Element): [Path, boolean, boolean][] {
         parsed = false;
       }
 
-      if (param && !param.endsWith("."))
-        return [Path.parse(param), false, parsed];
-      else return [Path.parse(param.slice(0, -1)), true, parsed];
-    });
+      try {
+        if (param && !param.endsWith("."))
+          return [Path.parse(param), false, parsed];
+        else return [Path.parse(param.slice(0, -1)), true, parsed];
+      } catch (err) {
+        warnings.push({
+          message: "Missing or invalid XML node",
+          element: "Name",
+          parameter: param,
+        });
+        return null;
+      }
+    })
+    .filter((e) => e != null);
 }
 
 const getValueType = memoize((str: string) => {
@@ -152,8 +162,8 @@ function parameterValueList(
   xml: Element
 ): [Path, string | number | boolean, string][] {
   return xml.children
-    .filter((e) => e.localName === "ParameterValueStruct")
     .map<[Path, string | number | boolean, string]>((e) => {
+      if (e.localName !== "ParameterValueStruct") return null;
       let valueElement: Element, param: string;
       for (const c of e.children) {
         switch (c.localName) {
@@ -209,15 +219,24 @@ function parameterValueList(
           parsed = value;
         }
       }
-
-      return [Path.parse(param), parsed, valueType];
-    });
+      try {
+        return [Path.parse(param), parsed, valueType];
+      } catch (err) {
+        warnings.push({
+          message: "Missing or invalid XML node",
+          element: "Name",
+          parameter: param,
+        });
+        return null;
+      }
+    })
+    .filter((e) => e != null);
 }
 
 function parameterAttributeList(xml: Element): [Path, number, string[]][] {
   return xml.children
-    .filter((e) => e.localName === "ParameterAttributeStruct")
     .map<[Path, number, string[]]>((e) => {
+      if (e.localName !== "ParameterAttributeStruct") return null;
       let notificationElement: Element,
         accessListElement: Element,
         param: string;
@@ -249,8 +268,18 @@ function parameterAttributeList(xml: Element): [Path, number, string[]][] {
         .filter((c) => c.localName === "string")
         .map((c) => decodeEntities(c.text));
 
-      return [Path.parse(param), notification, accessList];
-    });
+      try {
+        return [Path.parse(param), notification, accessList];
+      } catch (err) {
+        warnings.push({
+          message: "Missing or invalid XML node",
+          element: "Name",
+          parameter: param,
+        });
+        return null;
+      }
+    })
+    .filter((e) => e != null);
 }
 
 function GetParameterNames(methodRequest): string {
@@ -749,6 +778,18 @@ function RequestDownloadResponse(): string {
   return "<cwmp:RequestDownloadResponse></cwmp:RequestDownloadResponse>";
 }
 
+function AcsFault(f: CpeFault): string {
+  return `<soap-env:Body:Fault><faultcode>${encodeEntities(
+    f.faultCode
+  )}</faultcode><faultstring>${encodeEntities(
+    f.faultString
+  )}</faultstring><detail><cwmp:Fault><FaultCode>${encodeEntities(
+    f.detail.faultCode
+  )}</FaultCode><FaultString>${encodeEntities(
+    f.detail.faultString
+  )}</FaultString></cwmp:Fault></detail></soap-env:Body:Fault>`;
+}
+
 function faultStruct(xml: Element): FaultStruct {
   let faultCode: string,
     faultString: string,
@@ -846,18 +887,18 @@ function fault(xml: Element): CpeFault {
 
 export function request(
   body: string,
-  cwmpVersion: string,
   warn: Record<string, unknown>[]
 ): SoapMessage {
   warnings = warn;
 
   const rpc = {
     id: null,
-    cwmpVersion: cwmpVersion,
+    cwmpVersion: null,
     sessionTimeout: null,
     cpeRequest: null,
     cpeFault: null,
     cpeResponse: null,
+    unknownMethod: null,
   };
 
   if (!body.length) return rpc;
@@ -896,7 +937,7 @@ export function request(
 
   const methodElement = bodyElement.children[0];
 
-  if (!rpc.cwmpVersion && methodElement.localName !== "Fault") {
+  if (methodElement.localName === "Inform") {
     let namespace, namespaceHref;
     for (const e of [methodElement, bodyElement, envelope]) {
       namespace = namespace || e.namespace;
@@ -982,7 +1023,8 @@ export function request(
       rpc.cpeFault = fault(methodElement);
       break;
     default:
-      throw new Error(`8000 Method not supported ${methodElement.localName}`);
+      rpc.unknownMethod = methodElement.localName;
+      break;
   }
 
   return rpc;
@@ -1010,6 +1052,7 @@ export function response(rpc: {
   id: string;
   acsRequest?: AcsRequest;
   acsResponse?: AcsResponse;
+  acsFault?: CpeFault;
   cwmpVersion?: string;
 }): { code: number; headers: Record<string, string>; data: string } {
   const headers = {
@@ -1081,6 +1124,8 @@ export function response(rpc: {
           `Unknown method request ${(rpc.acsRequest as AcsRequest).name}`
         );
     }
+  } else if (rpc.acsFault) {
+    body = AcsFault(rpc.acsFault);
   }
 
   headers["Content-Type"] = 'text/xml; charset="utf-8"';

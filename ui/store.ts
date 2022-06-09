@@ -34,6 +34,8 @@ const memoizedEvaluate = memoize(evaluate);
 let fulfillTimestamp = 0;
 let connectionNotification, configNotification, versionNotification;
 
+let clockSkew = 0;
+
 const queries = {
   filter: new WeakMap(),
   bookmark: new WeakMap(),
@@ -76,14 +78,14 @@ for (const r of [
 }
 
 class QueryResponse {
-  public get fulfilled(): boolean {
+  public get fulfilled(): number {
     queries.accessed.set(this, Date.now());
-    return !!queries.fulfilled.get(this);
+    return queries.fulfilled.get(this) || 0;
   }
 
   public get fulfilling(): boolean {
     queries.accessed.set(this, Date.now());
-    return queries.fulfilling.has(this);
+    return !(queries.fulfilled.get(this) >= fulfillTimestamp);
   }
 
   public get value(): any {
@@ -93,11 +95,13 @@ class QueryResponse {
 }
 
 function checkConnection(): void {
+  const now1 = Date.now();
   m.request({
     url: "status",
     method: "GET",
     background: true,
     extract: (xhr) => {
+      const now2 = Date.now();
       if (xhr.status !== 200) {
         if (!connectionNotification) {
           connectionNotification = notifications.push(
@@ -110,6 +114,21 @@ function checkConnection(): void {
         if (connectionNotification) {
           notifications.dismiss(connectionNotification);
           connectionNotification = null;
+        }
+
+        try {
+          const nowAvg = Math.trunc((now1 + now2) / 2);
+          const skew = Date.parse(xhr.getResponseHeader("Date")) - nowAvg;
+          if (Math.abs(skew - clockSkew) > 5000 && now2 - now1 < 1000) {
+            clockSkew = skew;
+            console.warn(
+              `System and server clocks are out of sync. Adding ${clockSkew}ms offset to any client-side time relative calculations.`
+            );
+            setTimestamp(now2);
+            m.redraw();
+          }
+        } catch (err) {
+          // Ignore in case of missing or invalid Date header
         }
 
         const configChanged =
@@ -209,7 +228,7 @@ export async function xhrRequest(
 
 export function unpackExpression(exp: Expression): Expression {
   if (!Array.isArray(exp)) return exp;
-  const e = memoizedEvaluate(exp, null, fulfillTimestamp);
+  const e = memoizedEvaluate(exp, null, fulfillTimestamp + clockSkew);
   return e;
 }
 
@@ -295,7 +314,7 @@ function compareFunction(sort: {
 function findMatches(resourceType, filter, sort, limit): any[] {
   let value = [];
   for (const obj of resources[resourceType].objects.values())
-    if (evaluate(filter, obj, fulfillTimestamp)) value.push(obj);
+    if (evaluate(filter, obj, fulfillTimestamp + clockSkew)) value.push(obj);
 
   value = value.sort(compareFunction(sort));
   if (limit) value = value.slice(0, limit);
@@ -348,18 +367,7 @@ export function fetch(
   return queryResponse;
 }
 
-function _fulfill(
-  accessTimestamp: number,
-  _fulfillTimestamp: number
-): Promise<boolean> {
-  let updated = false;
-
-  if (_fulfillTimestamp > fulfillTimestamp) {
-    for (const resource of Object.values(resources))
-      resource.combinedFilter = null;
-    fulfillTimestamp = _fulfillTimestamp;
-  }
-
+export function fulfill(accessTimestamp: number): void {
   const allPromises = [];
 
   for (const [resourceType, resource] of Object.entries(resources)) {
@@ -373,38 +381,32 @@ function _fulfill(
 
       if (!(fulfillTimestamp <= queries.fulfilled.get(queryResponse))) {
         queries.fulfilling.add(queryResponse);
+        let filter = queries.filter.get(queryResponse);
+        filter = unpackExpression(filter);
         allPromises.push(
-          new Promise((resolve, reject) => {
-            updated = true;
-            let filter = queries.filter.get(queryResponse);
-            filter = unpackExpression(filter);
-            xhrRequest({
-              method: "HEAD",
-              url:
-                `api/${resourceType}/?` +
-                m.buildQueryString({
-                  filter: memoizedStringify(filter),
-                }),
-              extract: (xhr) => {
-                if (xhr.status === 403) throw new Error("Not authorized");
-                if (!xhr.status) {
-                  throw new Error("Server is unreachable");
-                } else if (xhr.status !== 200) {
-                  throw new Error(
-                    `Unexpected response status code ${xhr.status}`
-                  );
-                }
-                return +xhr.getResponseHeader("x-total-count");
-              },
-              background: true,
-            })
-              .then((c) => {
-                queries.value.set(queryResponse, c);
-                queries.fulfilled.set(queryResponse, fulfillTimestamp);
-                queries.fulfilling.delete(queryResponse);
-                resolve();
-              })
-              .catch((err) => reject(err));
+          xhrRequest({
+            method: "HEAD",
+            url:
+              `api/${resourceType}/?` +
+              m.buildQueryString({
+                filter: memoizedStringify(filter),
+              }),
+            extract: (xhr) => {
+              if (xhr.status === 403) throw new Error("Not authorized");
+              if (!xhr.status) {
+                throw new Error("Server is unreachable");
+              } else if (xhr.status !== 200) {
+                throw new Error(
+                  `Unexpected response status code ${xhr.status}`
+                );
+              }
+              return +xhr.getResponseHeader("x-total-count");
+            },
+            background: false,
+          }).then((c) => {
+            queries.value.set(queryResponse, c);
+            queries.fulfilled.set(queryResponse, fulfillTimestamp);
+            queries.fulfilling.delete(queryResponse);
           })
         );
       }
@@ -429,45 +431,39 @@ function _fulfill(
         const limit = queries.limit.get(queryResponse);
         const sort = queries.sort.get(queryResponse);
         if (limit) {
+          let filter = queries.filter.get(queryResponse);
+          filter = unpackExpression(filter);
           allPromises.push(
-            new Promise((resolve, reject) => {
-              updated = true;
-              let filter = queries.filter.get(queryResponse);
-              filter = unpackExpression(filter);
-              xhrRequest({
-                method: "GET",
-                url:
-                  `api/${resourceType}/?` +
-                  m.buildQueryString({
-                    filter: memoizedStringify(filter),
-                    limit: 1,
-                    skip: limit - 1,
-                    sort: JSON.stringify(sort),
-                    projection: Object.keys(sort).join(","),
-                  }),
-              })
-                .then((res) => {
-                  if ((res as any[]).length) {
-                    // Generate bookmark object
-                    const bm = Object.keys(sort).reduce((b, k) => {
-                      if (res[0][k] != null) {
-                        if (typeof res[0][k] === "object") {
-                          if (res[0][k].value != null)
-                            b[k] = res[0][k].value[0];
-                        } else {
-                          b[k] = res[0][k];
-                        }
-                      }
-
-                      return b;
-                    }, {});
-                    queries.bookmark.set(queryResponse, bm);
-                  } else {
-                    queries.bookmark.delete(queryResponse);
+            xhrRequest({
+              method: "GET",
+              url:
+                `api/${resourceType}/?` +
+                m.buildQueryString({
+                  filter: memoizedStringify(filter),
+                  limit: 1,
+                  skip: limit - 1,
+                  sort: JSON.stringify(sort),
+                  projection: Object.keys(sort).join(","),
+                }),
+              background: true,
+            }).then((res) => {
+              if ((res as any[]).length) {
+                // Generate bookmark object
+                const bm = Object.keys(sort).reduce((b, k) => {
+                  if (res[0][k] != null) {
+                    if (typeof res[0][k] === "object") {
+                      if (res[0][k].value != null) b[k] = res[0][k].value[0];
+                    } else {
+                      b[k] = res[0][k];
+                    }
                   }
-                  resolve();
-                })
-                .catch(reject);
+
+                  return b;
+                }, {});
+                queries.bookmark.set(queryResponse, bm);
+              } else {
+                queries.bookmark.delete(queryResponse);
+              }
             })
           );
         }
@@ -475,31 +471,88 @@ function _fulfill(
     }
   }
 
-  return new Promise((resolve, reject) => {
-    Promise.all(allPromises)
-      .then(() => {
-        const allPromises2 = [];
-        for (const [resourceType, toFetch] of Object.entries(toFetchAll)) {
-          let combinedFilter = null;
+  Promise.all(allPromises)
+    .then(() => {
+      let updated = false;
+      const allPromises2 = [];
+      for (const [resourceType, toFetch] of Object.entries(toFetchAll)) {
+        let combinedFilter = null;
 
+        for (const queryResponse of toFetch) {
+          let filter = queries.filter.get(queryResponse);
+          filter = memoizedEvaluate(filter, null, fulfillTimestamp + clockSkew);
+          const bookmark = queries.bookmark.get(queryResponse);
+          const sort = queries.sort.get(queryResponse);
+          if (bookmark) filter = limitFilter(filter, sort, bookmark);
+          combinedFilter = or(combinedFilter, filter);
+        }
+
+        const [union, diff] = unionDiff(
+          resources[resourceType].combinedFilter,
+          combinedFilter
+        );
+
+        if (!diff) {
           for (const queryResponse of toFetch) {
             let filter = queries.filter.get(queryResponse);
-            filter = memoizedEvaluate(filter, null, fulfillTimestamp);
+            filter = memoizedEvaluate(
+              filter,
+              null,
+              fulfillTimestamp + clockSkew
+            );
+            const limit = queries.limit.get(queryResponse);
             const bookmark = queries.bookmark.get(queryResponse);
             const sort = queries.sort.get(queryResponse);
             if (bookmark) filter = limitFilter(filter, sort, bookmark);
-            combinedFilter = or(combinedFilter, filter);
+
+            queries.value.set(
+              queryResponse,
+              findMatches(resourceType, filter, sort, limit)
+            );
+            queries.fulfilled.set(queryResponse, fulfillTimestamp);
+            queries.fulfilling.delete(queryResponse);
+            updated = true;
           }
+          continue;
+        }
 
-          const [union, diff] = unionDiff(
-            resources[resourceType].combinedFilter,
-            combinedFilter
-          );
+        let deleted = new Set<string>();
+        if (!resources[resourceType].combinedFilter)
+          deleted = new Set(resources[resourceType].objects.keys());
 
-          if (!diff) {
+        const combinedFilterDiff = diff;
+        resources[resourceType].combinedFilter = union;
+
+        allPromises2.push(
+          xhrRequest({
+            method: "GET",
+            url:
+              `api/${resourceType}/?` +
+              m.buildQueryString({
+                filter: memoizedStringify(combinedFilterDiff),
+              }),
+            background: false,
+          }).then((res) => {
+            for (const r of res as any[]) {
+              const id =
+                resourceType === "devices"
+                  ? r["DeviceID.ID"].value[0]
+                  : r["_id"];
+              resources[resourceType].objects.set(id, r);
+              deleted.delete(id);
+            }
+
+            for (const d of deleted) {
+              const obj = resources[resourceType].objects.get(d);
+              if (
+                evaluate(combinedFilterDiff, obj, fulfillTimestamp + clockSkew)
+              )
+                resources[resourceType].objects.delete(d);
+            }
+
             for (const queryResponse of toFetch) {
               let filter = queries.filter.get(queryResponse);
-              filter = memoizedEvaluate(filter, null, fulfillTimestamp);
+              filter = unpackExpression(filter);
               const limit = queries.limit.get(queryResponse);
               const bookmark = queries.bookmark.get(queryResponse);
               const sort = queries.sort.get(queryResponse);
@@ -512,85 +565,31 @@ function _fulfill(
               queries.fulfilled.set(queryResponse, fulfillTimestamp);
               queries.fulfilling.delete(queryResponse);
             }
-            continue;
-          }
-
-          updated = true;
-          let deleted = new Set<string>();
-          if (!resources[resourceType].combinedFilter)
-            deleted = new Set(resources[resourceType].objects.keys());
-
-          const combinedFilterDiff = diff;
-          resources[resourceType].combinedFilter = union;
-
-          allPromises2.push(
-            new Promise((resolve2, reject2) => {
-              xhrRequest({
-                method: "GET",
-                url:
-                  `api/${resourceType}/?` +
-                  m.buildQueryString({
-                    filter: memoizedStringify(combinedFilterDiff),
-                  }),
-              })
-                .then((res) => {
-                  for (const r of res as any[]) {
-                    const id =
-                      resourceType === "devices"
-                        ? r["DeviceID.ID"].value[0]
-                        : r["_id"];
-                    resources[resourceType].objects.set(id, r);
-                    deleted.delete(id);
-                  }
-
-                  for (const d of deleted) {
-                    const obj = resources[resourceType].objects.get(d);
-                    if (evaluate(combinedFilterDiff, obj, fulfillTimestamp))
-                      resources[resourceType].objects.delete(d);
-                  }
-
-                  for (const queryResponse of toFetch) {
-                    let filter = queries.filter.get(queryResponse);
-                    filter = unpackExpression(filter);
-                    const limit = queries.limit.get(queryResponse);
-                    const bookmark = queries.bookmark.get(queryResponse);
-                    const sort = queries.sort.get(queryResponse);
-                    if (bookmark) filter = limitFilter(filter, sort, bookmark);
-
-                    queries.value.set(
-                      queryResponse,
-                      findMatches(resourceType, filter, sort, limit)
-                    );
-                    queries.fulfilled.set(queryResponse, fulfillTimestamp);
-                    queries.fulfilling.delete(queryResponse);
-                  }
-                  resolve2();
-                })
-                .catch(reject2);
-            })
-          );
-        }
-        Promise.all(allPromises2)
-          .then(() => resolve(updated))
-          .catch(reject);
-      })
-      .catch(reject);
-  });
-}
-
-export function fulfill(
-  accessTimestamp: number,
-  _fulfillTimestamp: number,
-  callback?: (updated: boolean) => void
-): void {
-  _fulfill(accessTimestamp, _fulfillTimestamp).then(callback, (err) => {
-    notifications.push("error", err.message);
-    if (callback) callback(false);
-  });
+          })
+        );
+      }
+      if (updated) m.redraw();
+      return Promise.all(allPromises2);
+    })
+    .catch((err) => {
+      notifications.push("error", err.message);
+    });
 }
 
 export function getTimestamp(): number {
   return fulfillTimestamp;
+}
+
+export function setTimestamp(t: number): void {
+  if (t > fulfillTimestamp) {
+    fulfillTimestamp = t;
+    for (const resource of Object.values(resources))
+      resource.combinedFilter = null;
+  }
+}
+
+export function getClockSkew(): number {
+  return clockSkew;
 }
 
 export function postTasks(
@@ -610,9 +609,8 @@ export function postTasks(
       if (xhr.status === 403) throw new Error("Not authorized");
       if (!xhr.status) throw new Error("Server is unreachable");
       if (xhr.status !== 200) throw new Error(xhr.response);
-      const connectionRequestStatus = xhr.getResponseHeader(
-        "Connection-Request"
-      );
+      const connectionRequestStatus =
+        xhr.getResponseHeader("Connection-Request");
       const st = JSON.parse(xhr.response);
       for (const [i, t] of st.entries()) {
         tasks[i]._id = t._id;
@@ -694,7 +692,7 @@ export function evaluateExpression(
   obj: Record<string, unknown>
 ): Expression {
   if (!Array.isArray(exp)) return exp;
-  return memoizedEvaluate(exp, obj, fulfillTimestamp);
+  return memoizedEvaluate(exp, obj, fulfillTimestamp + clockSkew);
 }
 
 export function changePassword(

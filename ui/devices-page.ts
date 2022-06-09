@@ -154,14 +154,14 @@ function renderActions(selected: Set<string>): Children {
               .deleteResource("devices", id)
               .then(() => {
                 notifications.push("success", `${id}: Deleted`);
-                if (--counter === 0) store.fulfill(0, Date.now());
+                if (--counter === 0) store.setTimestamp(Date.now());
               })
               .catch((err) => {
                 notifications.push("error", `${id}: ${err.message}`);
-                if (--counter === 0) store.fulfill(0, Date.now());
+                if (--counter === 0) store.setTimestamp(Date.now());
               });
           }
-          if (--counter === 0) store.fulfill(0, Date.now());
+          if (--counter === 0) store.setTimestamp(Date.now());
         },
       },
       "Delete"
@@ -186,14 +186,14 @@ function renderActions(selected: Set<string>): Children {
               .updateTags(id, { [tag]: true })
               .then(() => {
                 notifications.push("success", `${id}: Tags updated`);
-                if (--counter === 0) store.fulfill(0, Date.now());
+                if (--counter === 0) store.setTimestamp(Date.now());
               })
               .catch((err) => {
                 notifications.push("error", `${id}: ${err.message}`);
-                if (--counter === 0) store.fulfill(0, Date.now());
+                if (--counter === 0) store.setTimestamp(Date.now());
               });
           }
-          if (--counter === 0) store.fulfill(0, Date.now());
+          if (--counter === 0) store.setTimestamp(Date.now());
         },
       },
       "Tag"
@@ -220,14 +220,14 @@ function renderActions(selected: Set<string>): Children {
               .updateTags(id, { [tag]: false })
               .then(() => {
                 notifications.push("success", `${id}: Tags updated`);
-                if (--counter === 0) store.fulfill(0, Date.now());
+                if (--counter === 0) store.setTimestamp(Date.now());
               })
               .catch((err) => {
                 notifications.push("error", `${id}: ${err.message}`);
-                if (--counter === 0) store.fulfill(0, Date.now());
+                if (--counter === 0) store.setTimestamp(Date.now());
               });
           }
-          if (--counter === 0) store.fulfill(0, Date.now());
+          if (--counter === 0) store.setTimestamp(Date.now());
         },
       },
       "Untag"
@@ -268,16 +268,13 @@ export const component: ClosureComponent = (): Component => {
       }
 
       function onSortChange(sortedAttrs): void {
-        const _sort = Object.assign({}, sort);
-        for (const [index, direction] of Object.entries(sortedAttrs)) {
-          const param = memoizedGetSortable(attributes[index].parameter);
-          if (param) {
-            // Changing the priority of columns
-            delete _sort[param];
-            _sort[param] = direction;
-          }
+        const _sort = {};
+        for (const index of sortedAttrs) {
+          const param = memoizedGetSortable(
+            attributes[Math.abs(index) - 1].parameter
+          );
+          _sort[param] = Math.sign(index);
         }
-
         const ops = { sort: JSON.stringify(_sort) };
         if (vnode.attrs["filter"]) ops["filter"] = vnode.attrs["filter"];
         m.route.set("/devices", ops);
@@ -328,15 +325,16 @@ export const component: ClosureComponent = (): Component => {
       if (window.authorizer.hasAccess("devices", 3))
         attrs["actionsCallback"] = renderActions;
 
-      const filterAttrs = {};
-      filterAttrs["resource"] = "devices";
-      filterAttrs["filter"] = vnode.attrs["filter"];
-      filterAttrs["onChange"] = onFilterChanged;
+      const filterAttrs = {
+        resource: "devices",
+        filter: vnode.attrs["filter"],
+        onChange: onFilterChanged,
+      };
 
       return [
         m("h1", "Listing devices"),
         m(filterComponent, filterAttrs),
-        m(indexTableComponent, attrs),
+        m("loading", { queries: [devs, count] }, m(indexTableComponent, attrs)),
       ];
     },
   };

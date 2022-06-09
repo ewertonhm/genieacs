@@ -17,7 +17,6 @@
  * along with GenieACS.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-import { parse } from "url";
 import * as db from "./db";
 import * as common from "./common";
 import * as cache from "./cache";
@@ -80,7 +79,7 @@ export async function connectionRequest(
     ).value || [""])[0];
   }
 
-  const remoteAddress = parse(connectionRequestUrl).host;
+  const remoteAddress = new URL(connectionRequestUrl).hostname;
 
   const evalCallback = (exp): Expression => {
     if (!Array.isArray(exp)) return exp;
@@ -95,7 +94,7 @@ export async function connectionRequest(
       else if (name === "password") return password;
 
       const p = device[name];
-      if (p && p.value) return p.value[0];
+      if (p?.value) return p.value[0];
     } else if (exp[0] === "FUNC") {
       if (exp[1] === "REMOTE_ADDRESS") return remoteAddress;
       else if (exp[1] === "USERNAME") return username;
@@ -145,15 +144,24 @@ export async function connectionRequest(
 
   const debug = !!getConfig(snapshot, "cwmp.debug", {}, now, evalCallback);
 
-  let udpProm;
+  let udpProm = Promise.resolve(false);
   if (udpConnectionRequestAddress) {
-    udpProm = udpConnectionRequest(
-      udpConnectionRequestAddress,
-      authExp,
-      UDP_CONNECTION_REQUEST_PORT,
-      debug,
-      deviceId
-    );
+    try {
+      const u = new URL("udp://" + udpConnectionRequestAddress);
+      udpProm = udpConnectionRequest(
+        u.hostname,
+        parseInt(u.port || "80"),
+        authExp,
+        UDP_CONNECTION_REQUEST_PORT,
+        debug,
+        deviceId
+      ).then(
+        () => true,
+        () => false
+      );
+    } catch (err) {
+      // Ignore invalid address
+    }
   }
 
   const status = await httpConnectionRequest(
@@ -165,10 +173,7 @@ export async function connectionRequest(
     deviceId
   );
 
-  if (udpProm) {
-    await udpProm;
-    return "";
-  }
+  if (await udpProm) return "";
 
   return status;
 }
@@ -296,6 +301,15 @@ function sanitizeTask(task): void {
       )
         throw new Error("Invalid 'provisions' property");
       break;
+
+    case "reboot":
+      break;
+
+    case "factoryReset":
+      break;
+
+    default:
+      throw new Error("Invalid task name");
   }
 
   return task;
@@ -303,7 +317,7 @@ function sanitizeTask(task): void {
 
 export async function insertTasks(tasks: any[]): Promise<Task[]> {
   if (tasks && !Array.isArray(tasks)) tasks = [tasks];
-  else if (!tasks || tasks.length === 0) return tasks || [];
+  else if (!tasks?.length) return tasks || [];
 
   for (const task of tasks) {
     sanitizeTask(task);

@@ -59,8 +59,10 @@ const getAuthorizer = memoize(
   }
 );
 
-koa.on("error", async (err) => {
+koa.on("error", async (err, ctx) => {
   setTimeout(() => {
+    // Ignored errors resulting from aborted requests
+    if (ctx?.req.aborted) return;
     throw err;
   });
 });
@@ -93,7 +95,7 @@ koa.use(
 koa.use(async (ctx, next) => {
   let roles: string[] = [];
 
-  if (ctx.state.user && ctx.state.user.username) {
+  if (ctx.state.user?.username) {
     let user;
     if (ctx.state.user.authMethod === "local") {
       user = localCache.getUsers(ctx.state.configSnapshot)[
@@ -219,13 +221,14 @@ router.post("/init", async (ctx) => {
 });
 
 router.get("/", async (ctx) => {
-  const permissionSets: PermissionSet[] = ctx.state.authorizer.getPermissionSets();
+  const permissionSets: PermissionSet[] =
+    ctx.state.authorizer.getPermissionSets();
 
   let wizard = "";
   if (!Object.keys(localCache.getUsers(ctx.state.configSnapshot)).length)
     wizard = '<script>window.location.hash = "#!/wizard";</script>';
 
-  ctx.body = `
+  ctx.body = `<!DOCTYPE html>
   <html>
     <head>
       <title>GenieACS</title>
@@ -245,7 +248,7 @@ router.get("/", async (ctx) => {
         )};
         window.permissionSets = ${JSON.stringify(permissionSets)};
       </script>
-      <script src="app.js"></script>${wizard} 
+      <script type="module" src="app.js"></script>${wizard} 
     </body>
   </html>
   `;
@@ -258,6 +261,12 @@ koa.use(
     },
     deflate: {
       flush: constants.Z_SYNC_FLUSH,
+    },
+    br: {
+      flush: constants.BROTLI_OPERATION_FLUSH,
+      params: {
+        [constants.BROTLI_PARAM_QUALITY]: 5,
+      },
     },
   })
 );

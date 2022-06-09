@@ -27,7 +27,7 @@ import * as notifications from "./notifications";
 import memoize from "../lib/common/memoize";
 import * as smartQuery from "./smart-query";
 import { map, parse, stringify } from "../lib/common/expression-parser";
-import { loadYaml, yaml } from "./dynamic-loader";
+import { stringify as yamlStringify } from "../lib/common/yaml";
 
 const PAGE_SIZE = config.ui.pageSize || 10;
 
@@ -76,13 +76,7 @@ export function init(
 
   const sort = args.hasOwnProperty("sort") ? "" + args["sort"] : "";
   const filter = args.hasOwnProperty("filter") ? "" + args["filter"] : "";
-  return new Promise((resolve, reject) => {
-    loadYaml()
-      .then(() => {
-        resolve({ filter, sort });
-      })
-      .catch(reject);
-  });
+  return Promise.resolve({ filter, sort });
 }
 
 export const component: ClosureComponent = (): Component => {
@@ -113,13 +107,9 @@ export const component: ClosureComponent = (): Component => {
       }
 
       function onSortChange(sortAttrs): void {
-        const _sort = Object.assign({}, sort);
-        for (const [index, direction] of Object.entries(sortAttrs)) {
-          // Changing the priority of columns
-          delete _sort[attributes[index].id];
-          _sort[attributes[index].id] = direction;
-        }
-
+        const _sort = {};
+        for (const index of sortAttrs)
+          _sort[attributes[Math.abs(index) - 1].id] = Math.sign(index);
         const ops = { sort: JSON.stringify(_sort) };
         if (vnode.attrs["filter"]) ops["filter"] = vnode.attrs["filter"];
         m.route.set("/faults", ops);
@@ -147,8 +137,11 @@ export const component: ClosureComponent = (): Component => {
           return m("a", { href: deviceHref }, fault["device"]);
         }
 
+        if (attr.id === "message")
+          return m("long-text", { text: fault["message"] });
+
         if (attr.id === "detail")
-          return m("long-text", { text: yaml.stringify(fault["detail"]) });
+          return m("long-text", { text: yamlStringify(fault["detail"]) });
 
         if (attr.id === "timestamp")
           return new Date(fault["timestamp"]).toLocaleString();
@@ -190,11 +183,11 @@ export const component: ClosureComponent = (): Component => {
                       "success",
                       `${res.length} faults deleted`
                     );
-                    store.fulfill(0, Date.now());
+                    store.setTimestamp(Date.now());
                   })
                   .catch((err) => {
                     notifications.push("error", err.message);
-                    store.fulfill(0, Date.now());
+                    store.setTimestamp(Date.now());
                   });
               },
             },
@@ -203,15 +196,20 @@ export const component: ClosureComponent = (): Component => {
         };
       }
 
-      const filterAttrs = {};
-      filterAttrs["resource"] = "faults";
-      filterAttrs["filter"] = vnode.attrs["filter"];
-      filterAttrs["onChange"] = onFilterChanged;
+      const filterAttrs = {
+        resource: "faults",
+        filter: vnode.attrs["filter"],
+        onChange: onFilterChanged,
+      };
 
       return [
         m("h1", "Listing faults"),
         m(filterComponent, filterAttrs),
-        m(indexTableComponent, attrs),
+        m(
+          "loading",
+          { queries: [faults, count] },
+          m(indexTableComponent, attrs)
+        ),
       ];
     },
   };

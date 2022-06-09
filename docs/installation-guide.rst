@@ -4,7 +4,7 @@ Installation Guide
 This guide is for installing GenieACS on a single server on any Linux distro
 that uses *systemd* as its init system.
 
-The various GenieACS services are independant of each other and may be
+The various GenieACS services are independent of each other and may be
 installed on different servers. You may also run multiple instances of each in
 a load-balancing/failover setup.
 
@@ -19,7 +19,7 @@ Prerequisites
 
 .. topic:: Node.js
 
-  GenieACS requires Node.js 10.x and up. Refer to https://nodejs.org/ for
+  GenieACS requires Node.js 12.13 and up. Refer to https://nodejs.org/ for
   instructions.
 
 .. topic:: MongoDB
@@ -34,7 +34,7 @@ Install GenieACS
 
   .. parsed-literal::
 
-    sudo npm install -g --unsafe-perm genieacs@\ |release|
+    sudo npm install -g genieacs@\ |release|
 
 .. topic:: Installing from source
 
@@ -73,6 +73,7 @@ Configure systemd
     GENIEACS_FS_ACCESS_LOG_FILE=/var/log/genieacs/genieacs-fs-access.log
     GENIEACS_UI_ACCESS_LOG_FILE=/var/log/genieacs/genieacs-ui-access.log
     GENIEACS_DEBUG_FILE=/var/log/genieacs/genieacs-debug.yaml
+    NODE_OPTIONS=--enable-source-maps
     GENIEACS_EXT_DIR=/opt/genieacs/ext
     GENIEACS_UI_JWT_SECRET=secret
   

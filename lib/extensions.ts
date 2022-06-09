@@ -22,19 +22,13 @@ import * as crypto from "crypto";
 import * as config from "./config";
 import { Fault } from "./types";
 import { ROOT_DIR } from "./config";
+import * as logger from "./logger";
+import readline from "readline";
 
 const TIMEOUT = +config.get("EXT_TIMEOUT");
 
 const processes: { [script: string]: ChildProcess } = {};
 const jobs = new Map();
-
-function messageHandler(message): void {
-  const func = jobs.get(message[0]);
-  if (func) {
-    jobs.delete(message[0]);
-    func({ fault: message[1], value: message[2] });
-  }
-}
 
 export function run(args: string[]): Promise<{ fault: Fault; value: any }> {
   return new Promise((resolve) => {
@@ -45,7 +39,7 @@ export function run(args: string[]): Promise<{ fault: Fault; value: any }> {
 
     if (!processes[scriptName]) {
       const p = spawn(ROOT_DIR + "/bin/genieacs-ext", [scriptName], {
-        stdio: ["inherit", "inherit", "inherit", "ipc"],
+        stdio: ["ignore", "pipe", "pipe", "ipc"],
       });
       processes[scriptName] = p;
 
@@ -68,7 +62,26 @@ export function run(args: string[]): Promise<{ fault: Fault; value: any }> {
         if (processes[scriptName] === p) delete processes[scriptName];
       });
 
-      p.on("message", messageHandler);
+      p.on("message", (message) => {
+        const func = jobs.get(message[0]);
+        if (func) {
+          jobs.delete(message[0]);
+          // Wait for any disconnect even to fire
+          setTimeout(() => {
+            func({ fault: message[1], value: message[2] });
+          });
+        }
+      });
+
+      const rlstdout = readline.createInterface(p.stdout);
+      rlstdout.on("line", (line) => {
+        logger.info({ message: `Ext ${scriptName}(${p.pid}): ${line}` });
+      });
+
+      const rlstderr = readline.createInterface(p.stderr);
+      rlstderr.on("line", (line) => {
+        logger.warn({ message: `Ext ${scriptName}(${p.pid}): ${line}` });
+      });
     }
 
     setTimeout(() => {

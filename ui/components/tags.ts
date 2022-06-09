@@ -29,7 +29,8 @@ const component: ClosureComponent = (): Component => {
     view: (vnode) => {
       const device = vnode.attrs["device"];
       let writable = true;
-      if (vnode.attrs["writable"] != null) writable = vnode.attrs["writable"];
+      if ("writable" in vnode.attrs)
+        writable = !!store.evaluateExpression(vnode.attrs["writable"], device);
 
       const tags = [];
       for (const p of Object.keys(device))
@@ -64,7 +65,7 @@ const component: ClosureComponent = (): Component => {
                         "success",
                         `${deviceId}: Tags updated`
                       );
-                      store.fulfill(0, Date.now());
+                      store.setTimestamp(Date.now());
                     })
                     .catch((err) => {
                       e.target.disabled = false;
@@ -99,7 +100,7 @@ const component: ClosureComponent = (): Component => {
                   .then(() => {
                     e.target.disabled = false;
                     notifications.push("success", `${deviceId}: Tags updated`);
-                    store.fulfill(0, Date.now());
+                    store.setTimestamp(Date.now());
                   })
                   .catch((err) => {
                     e.target.disabled = false;

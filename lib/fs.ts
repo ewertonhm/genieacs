@@ -18,12 +18,12 @@
  */
 
 import * as url from "url";
-import * as querystring from "querystring";
 import { IncomingMessage, ServerResponse } from "http";
 import { Collection, GridFSBucket, ObjectId } from "mongodb";
 import { onConnect, getOperations } from "./db";
 import * as logger from "./logger";
 import { getRequestOrigin } from "./forwarded";
+import memoize from "./common/memoize";
 
 let filesCollection: Collection;
 let filesBucket: GridFSBucket;
@@ -34,6 +34,7 @@ onConnect(async (db) => {
   filesBucket = new GridFSBucket(db);
   uploadsBucket = new GridFSBucket(db, { bucketName: "uploads" });
 });
+
 
 async function canUpload(
   deviceId: string,
@@ -52,19 +53,43 @@ async function canUpload(
   return canUpload(deviceId, fileName, timeout);
 }
 
+const getFile = memoize(
+  (uploadDate: number, size: number, filename: string): Promise<Buffer> => {
+    return new Promise((resolve, reject) => {
+      const buffer = Buffer.allocUnsafe(size);
+      let i = 0;
+      const downloadStream = filesBucket.openDownloadStreamByName(filename);
+      downloadStream.on("error", reject);
+      downloadStream.on("data", (data: Buffer) => {
+        data.copy(buffer, i);
+        i += data.length;
+      });
+      downloadStream.on("end", () => {
+        if (i !== size) reject(new Error("File size mismatch"));
+        else resolve(buffer);
+      });
+    });
+  }
+);
+
 export async function listener(
   request: IncomingMessage,
   response: ServerResponse
 ): Promise<void> {
-  const urlParts = url.parse(request.url, true);
-  if (request.method === "GET") {
-    const filename = querystring.unescape(urlParts.pathname.substring(1));
+  if (request.method !== "GET") {
+    response.writeHead(405, { Allow: "GET" });
+    response.end("405 Method Not Allowed");
+    return;
+  }
 
-    const log = {
-      message: "Fetch file",
-      filename: filename,
-      remoteAddress: getRequestOrigin(request).remoteAddress,
-    };
+  const urlParts = url.parse(request.url, true);
+  const filename = decodeURIComponent(urlParts.pathname.substring(1));
+
+  const log = {
+    message: "Fetch file",
+    filename: filename,
+    remoteAddress: getRequestOrigin(request).remoteAddress,
+  };
 
     const file = await filesCollection.findOne({ _id: filename });
     if (!file) {
@@ -75,6 +100,12 @@ export async function listener(
       return;
     }
 
+    const buffer = await getFile(
+        file["uploadDate"].getTime(),
+        file.length,
+        filename
+    );
+
     response.writeHead(200, {
       "Content-Type": file.contentType || "application/octet-stream",
       "Content-Length": file.length,
@@ -82,6 +113,8 @@ export async function listener(
 
     const downloadStream = filesBucket.openDownloadStreamByName(filename);
     downloadStream.pipe(response);
+    response.end(buffer);
+    logger.accessInfo(log);
 
     logger.accessInfo(log);
   } else if (request.method === "PUT") {

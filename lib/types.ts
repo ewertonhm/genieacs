@@ -504,7 +504,7 @@ export interface VirtualParameters {
 }
 
 export interface Files {
-  [name: string]: { length: number; md5: string; contentType: string };
+  [name: string]: { length: number };
 }
 
 export interface Users {
@@ -553,6 +553,7 @@ export interface SoapMessage {
   cpeRequest?: CpeRequest;
   cpeFault?: CpeFault;
   cpeResponse?: CpeResponse;
+  unknownMethod?: string;
 }
 
 export interface ScriptResult {

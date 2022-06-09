@@ -19,20 +19,23 @@
 
 import * as url from "url";
 import { Collection, GridFSBucket, ObjectId } from "mongodb";
-import * as querystring from "querystring";
 import * as vm from "vm";
 import * as config from "./config";
-import { onConnect } from "./db";
+import { onConnect, optimizeProjection } from "./db";
 import * as query from "./query";
 import * as apiFunctions from "./api-functions";
 import { IncomingMessage, ServerResponse } from "http";
 import * as cache from "./cache";
 import { version as VERSION } from "../package.json";
 import { ping } from "./ping";
+import * as logger from "./logger";
+import { flattenDevice } from "./mongodb-functions";
+import { getSocketEndpoints } from "./server";
 
 const DEVICE_TASKS_REGEX = /^\/devices\/([a-zA-Z0-9\-_%]+)\/tasks\/?$/;
 const TASKS_REGEX = /^\/tasks\/([a-zA-Z0-9\-_%]+)(\/[a-zA-Z_]*)?$/;
-const TAGS_REGEX = /^\/devices\/([a-zA-Z0-9\-_%]+)\/tags\/([a-zA-Z0-9\-_%]+)\/?$/;
+const TAGS_REGEX =
+  /^\/devices\/([a-zA-Z0-9\-_%]+)\/tags\/([a-zA-Z0-9\-_%]+)\/?$/;
 const PRESETS_REGEX = /^\/presets\/([a-zA-Z0-9\-_%]+)\/?$/;
 const OBJECTS_REGEX = /^\/objects\/([a-zA-Z0-9\-_%]+)\/?$/;
 const FILES_REGEX = /^\/files\/([a-zA-Z0-9%!*'();:@&=+$,?#[\]\-_.~]+)\/?$/;
@@ -40,15 +43,16 @@ const PING_REGEX = /^\/ping\/([a-zA-Z0-9\-_.:]+)\/?$/;
 const QUERY_REGEX = /^\/([a-zA-Z0-9_]+)\/?$/;
 const DELETE_DEVICE_REGEX = /^\/devices\/([a-zA-Z0-9\-_%]+)\/?$/;
 const PROVISIONS_REGEX = /^\/provisions\/([a-zA-Z0-9\-_%]+)\/?$/;
-const VIRTUAL_PARAMETERS_REGEX = /^\/virtual_parameters\/([a-zA-Z0-9\-_%]+)\/?$/;
+const VIRTUAL_PARAMETERS_REGEX =
+  /^\/virtual_parameters\/([a-zA-Z0-9\-_%]+)\/?$/;
 const FAULTS_REGEX = /^\/faults\/([a-zA-Z0-9\-_%:]+)\/?$/;
 
-const collections = {
+const collections: Record<string, Collection> = {
   tasks: null as Collection,
   devices: null as Collection,
   presets: null as Collection,
   objects: null as Collection,
-  "fs.files": null as Collection,
+  files: null as Collection,
   provisions: null as Collection,
   virtualParameters: null as Collection,
   faults: null as Collection,
@@ -56,7 +60,10 @@ const collections = {
 let filesBucket: GridFSBucket;
 
 onConnect(async (db) => {
-  for (const k of Object.keys(collections)) collections[k] = db.collection(k);
+  for (const k of Object.keys(collections)) {
+    if (k === "files") collections[k] = db.collection("fs.files");
+    else collections[k] = db.collection(k);
+  }
   filesBucket = new GridFSBucket(db);
 });
 
@@ -95,12 +102,28 @@ export function listener(
   request.addListener("end", () => {
     const body = getBody();
     const urlParts = url.parse(request.url, true);
+    const socketEndpoints = getSocketEndpoints(request.socket);
+
+    logger.accessInfo(
+      Object.assign({}, urlParts.query, {
+        remoteAddress: socketEndpoints.remoteAddress,
+        message: `${request.method} ${urlParts.pathname}`,
+      })
+    );
+
     if (PRESETS_REGEX.test(urlParts.pathname)) {
-      const presetName = querystring.unescape(
+      const presetName = decodeURIComponent(
         PRESETS_REGEX.exec(urlParts.pathname)[1]
       );
       if (request.method === "PUT") {
-        const preset = JSON.parse(body.toString());
+        let preset;
+        try {
+          preset = JSON.parse(body.toString());
+        } catch (err) {
+          response.writeHead(400);
+          response.end(`${err.name}: ${err.message}`);
+          return;
+        }
         preset._id = presetName;
         collections.presets.replaceOne(
           { _id: presetName },
@@ -143,11 +166,18 @@ export function listener(
         response.end("405 Method Not Allowed");
       }
     } else if (OBJECTS_REGEX.test(urlParts.pathname)) {
-      const objectName = querystring.unescape(
+      const objectName = decodeURIComponent(
         OBJECTS_REGEX.exec(urlParts.pathname)[1]
       );
       if (request.method === "PUT") {
-        const object = JSON.parse(body.toString());
+        let object;
+        try {
+          object = JSON.parse(body.toString());
+        } catch (err) {
+          response.writeHead(400);
+          response.end(`${err.name}: ${err.message}`);
+          return;
+        }
         object._id = objectName;
         collections.objects.replaceOne(
           { _id: objectName },
@@ -190,7 +220,7 @@ export function listener(
         response.end("405 Method Not Allowed");
       }
     } else if (PROVISIONS_REGEX.test(urlParts.pathname)) {
-      const provisionName = querystring.unescape(
+      const provisionName = decodeURIComponent(
         PROVISIONS_REGEX.exec(urlParts.pathname)[1]
       );
       if (request.method === "PUT") {
@@ -248,7 +278,7 @@ export function listener(
         response.end("405 Method Not Allowed");
       }
     } else if (VIRTUAL_PARAMETERS_REGEX.test(urlParts.pathname)) {
-      const virtualParameterName = querystring.unescape(
+      const virtualParameterName = decodeURIComponent(
         VIRTUAL_PARAMETERS_REGEX.exec(urlParts.pathname)[1]
       );
       if (request.method === "PUT") {
@@ -310,8 +340,8 @@ export function listener(
       }
     } else if (TAGS_REGEX.test(urlParts.pathname)) {
       const r = TAGS_REGEX.exec(urlParts.pathname);
-      const deviceId = querystring.unescape(r[1]);
-      const tag = querystring.unescape(r[2]);
+      const deviceId = decodeURIComponent(r[1]);
+      const tag = decodeURIComponent(r[2]);
       if (request.method === "POST") {
         collections.devices.updateOne(
           { _id: deviceId },
@@ -339,7 +369,7 @@ export function listener(
       }
     } else if (FAULTS_REGEX.test(urlParts.pathname)) {
       if (request.method === "DELETE") {
-        const faultId = querystring.unescape(
+        const faultId = decodeURIComponent(
           FAULTS_REGEX.exec(urlParts.pathname)[1]
         );
         const deviceId = faultId.split(":", 1)[0];
@@ -384,15 +414,31 @@ export function listener(
       }
     } else if (DEVICE_TASKS_REGEX.test(urlParts.pathname)) {
       if (request.method === "POST") {
-        const deviceId = querystring.unescape(
+        const deviceId = decodeURIComponent(
           DEVICE_TASKS_REGEX.exec(urlParts.pathname)[1]
         );
         if (body.length) {
-          const task = JSON.parse(body.toString());
+          let task;
+          try {
+            task = JSON.parse(body.toString());
+          } catch (err) {
+            response.writeHead(400);
+            response.end(`${err.name}: ${err.message}`);
+            return;
+          }
           task.device = deviceId;
-          apiFunctions
-            .insertTasks(task)
-            .then(async () => {
+          collections.devices
+            .findOne({ _id: deviceId })
+            .then(async (dev) => {
+              if (!dev) {
+                response.writeHead(404);
+                response.end("No such device");
+                return;
+              }
+
+              const device = flattenDevice(dev);
+              await apiFunctions.insertTasks(task);
+
               const lastInform = Date.now();
 
               const socketTimeout: number = request.socket["timeout"];
@@ -423,7 +469,10 @@ export function listener(
                 return;
               }
 
-              const status = await apiFunctions.connectionRequest(deviceId);
+              const status = await apiFunctions.connectionRequest(
+                deviceId,
+                device
+              );
 
               if (status) {
                 if (socketTimeout) request.socket.setTimeout(socketTimeout);
@@ -506,15 +555,28 @@ export function listener(
             });
         } else if (urlParts.query.connection_request != null) {
           // No task, send connection request only
-          apiFunctions
-            .connectionRequest(deviceId)
-            .then(() => {
-              response.writeHead(200);
-              response.end();
+          collections.devices
+            .findOne({ _id: deviceId })
+            .then(async (dev) => {
+              if (!dev) {
+                response.writeHead(404);
+                response.end("No such device");
+                return;
+              }
+              return apiFunctions.connectionRequest(deviceId).then((status) => {
+                if (status) {
+                  response.writeHead(504, status);
+                  response.end(status);
+                  return;
+                }
+                response.writeHead(200);
+                response.end();
+              });
             })
             .catch((err) => {
-              response.writeHead(504);
-              response.end(`${err.name}: ${err.message}`);
+              setTimeout(() => {
+                throwError(err, response);
+              });
             });
         } else {
           response.writeHead(400);
@@ -526,7 +588,7 @@ export function listener(
       }
     } else if (TASKS_REGEX.test(urlParts.pathname)) {
       const r = TASKS_REGEX.exec(urlParts.pathname);
-      const taskId = querystring.unescape(r[1]);
+      const taskId = decodeURIComponent(r[1]);
       const action = r[2];
       if (!action || action === "/") {
         if (request.method === "DELETE") {
@@ -612,7 +674,7 @@ export function listener(
         response.end();
       }
     } else if (FILES_REGEX.test(urlParts.pathname)) {
-      const filename = querystring.unescape(
+      const filename = decodeURIComponent(
         FILES_REGEX.exec(urlParts.pathname)[1]
       );
       if (request.method === "PUT") {
@@ -622,9 +684,9 @@ export function listener(
           productClass: request.headers.productclass,
           version: request.headers.version,
         };
-        filesBucket.delete((filename as unknown) as ObjectId, () => {
+        filesBucket.delete(filename as unknown as ObjectId, () => {
           const uploadStream = filesBucket.openUploadStreamWithId(
-            filename,
+            filename as unknown as ObjectId,
             filename,
             {
               metadata: metadata,
@@ -641,7 +703,7 @@ export function listener(
           });
         });
       } else if (request.method === "DELETE") {
-        filesBucket.delete((filename as unknown) as ObjectId, (err) => {
+        filesBucket.delete(filename as unknown as ObjectId, (err) => {
           if (err) {
             if (err.message.startsWith("FileNotFound")) {
               response.writeHead(404);
@@ -659,7 +721,7 @@ export function listener(
         response.end("405 Method Not Allowed");
       }
     } else if (PING_REGEX.test(urlParts.pathname)) {
-      const host = querystring.unescape(PING_REGEX.exec(urlParts.pathname)[1]);
+      const host = decodeURIComponent(PING_REGEX.exec(urlParts.pathname)[1]);
       ping(host, (err, res, stdout) => {
         if (err) {
           if (!res) {
@@ -685,7 +747,7 @@ export function listener(
         return;
       }
 
-      const deviceId = querystring.unescape(
+      const deviceId = decodeURIComponent(
         DELETE_DEVICE_REGEX.exec(urlParts.pathname)[1]
       );
       apiFunctions
@@ -759,12 +821,20 @@ export function listener(
         projection = {};
         for (const p of (urlParts.query.projection as string).split(","))
           projection[p.trim()] = 1;
+        projection = optimizeProjection(projection);
       }
 
       const cur = collection.find(q, { projection: projection });
 
       if (urlParts.query.sort) {
-        const s = JSON.parse(urlParts.query.sort as string);
+        let s;
+        try {
+          s = JSON.parse(urlParts.query.sort as string);
+        } catch (err) {
+          response.writeHead(400);
+          response.end(`${err.name}: ${err.message}`);
+          return;
+        }
         const sort = {};
         for (const [k, v] of Object.entries(s)) {
           if (k[k.lastIndexOf(".") + 1] !== "_" && collectionName === "devices")
@@ -775,13 +845,7 @@ export function listener(
         cur.sort(sort);
       }
 
-      if (urlParts.query.skip)
-        cur.skip(parseInt(urlParts.query.skip as string));
-
-      if (urlParts.query.limit)
-        cur.limit(parseInt(urlParts.query.limit as string));
-
-      cur.count(false, (err, total) => {
+      cur.count((err, total) => {
         if (err) return void throwError(err);
 
         response.writeHead(200, {
@@ -793,6 +857,12 @@ export function listener(
           response.end();
           return;
         }
+
+        if (urlParts.query.skip)
+          cur.skip(parseInt(urlParts.query.skip as string));
+
+        if (urlParts.query.limit)
+          cur.limit(parseInt(urlParts.query.limit as string));
 
         response.write("[\n");
         i = 0;

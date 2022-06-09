@@ -45,7 +45,6 @@ const attributes: {
   {
     id: "metadata.fileType",
     label: "Type",
-    type: "combo",
     options: [
       "1 Firmware Upgrade Image",
       "2 Web Content",
@@ -74,58 +73,32 @@ const unpackSmartQuery = memoize((query) => {
   });
 });
 
-interface ValidationErrors {
-  [prop: string]: string;
-}
-
-function putActionHandler(action, _object): Promise<ValidationErrors> {
-  return new Promise((resolve, reject) => {
-    const object = Object.assign({}, _object);
-    if (action === "save") {
-      const file = object["file"] ? object["file"][0] : null;
-      delete object["file"];
-
-      if (!file) return void resolve({ file: "File not selected" });
-
-      const id = file.name;
-
-      store
-        .resourceExists("files", id)
-        .then((exists) => {
-          if (exists) {
-            store.fulfill(0, Date.now());
-            return void resolve({ file: "File already exists" });
-          }
-          const headers = Object.assign(
-            {
-              "Content-Type": "application/octet-stream",
-              Accept: "application/octet-stream",
-            },
-            object
-          );
-
-          store
-            .xhrRequest({
-              method: "PUT",
-              headers: headers,
-              url: `api/files/${encodeURIComponent(id)}`,
-              serialize: (body) => body, // Identity function to prevent JSON.parse on blob data
-              body: file,
-            })
-            .then(() => {
-              notifications.push(
-                "success",
-                `File ${exists ? "updated" : "created"}`
-              );
-              store.fulfill(0, Date.now());
-              resolve();
-            })
-            .catch(reject);
-        })
-        .catch(reject);
-    } else {
-      reject(new Error("Undefined action"));
-    }
+function upload(
+  file: File,
+  headers: Record<string, string>,
+  abortSignal?: AbortSignal,
+  progressListener?: (e: ProgressEvent) => void
+): Promise<void> {
+  headers = Object.assign(
+    {
+      "Content-Type": "application/octet-stream",
+    },
+    headers
+  );
+  return store.xhrRequest({
+    method: "PUT",
+    headers: headers,
+    url: `api/files/${encodeURIComponent(file.name)}`,
+    serialize: (body) => body, // Identity function to prevent JSON.parse on blob data
+    body: file,
+    config: (xhr) => {
+      if (progressListener)
+        xhr.upload.addEventListener("progress", progressListener);
+      if (abortSignal) {
+        if (abortSignal.aborted) xhr.abort();
+        abortSignal.addEventListener("abort", () => xhr.abort());
+      }
+    },
   });
 }
 
@@ -178,13 +151,9 @@ export const component: ClosureComponent = (): Component => {
         sortAttributes[i] = sort[attributes[i].id] || 0;
 
       function onSortChange(sortAttrs): void {
-        const _sort = Object.assign({}, sort);
-        for (const [index, direction] of Object.entries(sortAttrs)) {
-          // Changing the priority of columns
-          delete _sort[attributes[index].id];
-          _sort[attributes[index].id] = direction;
-        }
-
+        const _sort = {};
+        for (const index of sortAttrs)
+          _sort[attributes[Math.abs(index) - 1].id] = Math.sign(index);
         const ops = { sort: JSON.stringify(_sort) };
         if (vnode.attrs["filter"]) ops["filter"] = vnode.attrs["filter"];
         m.route.set("/admin/files", ops);
@@ -212,6 +181,9 @@ export const component: ClosureComponent = (): Component => {
       attrs["sortAttributes"] = sortAttributes;
       attrs["onSortChange"] = onSortChange;
       attrs["downloadUrl"] = downloadUrl;
+      attrs["recordActionsCallback"] = (file) => {
+        return [m("a", { href: "api/blob/files/" + file["_id"] }, "Download")];
+      };
 
       if (window.authorizer.hasAccess("files", 3)) {
         attrs["actionsCallback"] = (selected: Set<string>): Children => {
@@ -222,42 +194,83 @@ export const component: ClosureComponent = (): Component => {
                 title: "Create new file",
                 onclick: () => {
                   let cb: () => Children = null;
+                  const abortController = new AbortController();
+                  let progress = -1;
                   const comp = m(
                     putFormComponent,
                     Object.assign(
                       {
-                        actionHandler: (action, object) => {
-                          return new Promise((resolve) => {
-                            putActionHandler(action, object)
-                              .then((errors) => {
-                                const errorList = errors
-                                  ? Object.values(errors)
-                                  : [];
-                                if (errorList.length) {
-                                  for (const err of errorList)
-                                    notifications.push("error", err);
-                                } else {
-                                  overlay.close(cb);
-                                }
-                                resolve();
-                              })
-                              .catch((err) => {
-                                notifications.push("error", err.message);
-                                resolve();
-                              });
-                          });
+                        actionHandler: async (action, obj) => {
+                          if (action !== "save")
+                            throw new Error("Undefined action");
+                          const file = obj["file"]?.[0];
+
+                          // nginx strips out headers with dot, so replace with dash
+                          const headers = {
+                            "metadata-fileType": obj["metadata.fileType"] || "",
+                            "metadata-oui": obj["metadata.oui"] || "",
+                            "metadata-productclass":
+                              obj["metadata.productClass"] || "",
+                            "metadata-version": obj["metadata.version"] || "",
+                          };
+
+                          if (!file) {
+                            notifications.push("error", "File not selected");
+                            return;
+                          }
+
+                          if (await store.resourceExists("files", file.name)) {
+                            store.setTimestamp(Date.now());
+                            notifications.push("error", "File already exists");
+                            return;
+                          }
+
+                          const progressListener = (e: ProgressEvent): void => {
+                            progress = e.loaded / e.total;
+                            m.redraw();
+                          };
+
+                          progress = 0;
+                          try {
+                            await upload(
+                              file,
+                              headers,
+                              abortController.signal,
+                              progressListener
+                            );
+                            store.setTimestamp(Date.now());
+                            notifications.push("success", "File created");
+                            overlay.close(cb);
+                          } catch (err) {
+                            notifications.push("error", err.message);
+                          }
+                          progress = -1;
                         },
                       },
                       formData
                     )
                   );
-                  cb = () => comp;
-                  overlay.open(
-                    cb,
-                    () =>
-                      !comp.state["current"]["modified"] ||
-                      confirm("You have unsaved changes. Close anyway?")
-                  );
+                  cb = () => {
+                    if (progress < 0) return [null, comp];
+                    return [
+                      m(
+                        "div.progress",
+                        m("div.progress-bar", {
+                          style: `width: ${Math.trunc(progress * 100)}%`,
+                        })
+                      ),
+                      comp,
+                    ];
+                  };
+                  overlay.open(cb, () => {
+                    if (
+                      comp.state["current"]["modified"] &&
+                      !confirm("You have unsaved changes. Close anyway?")
+                    )
+                      return false;
+                    abortController.abort();
+                    return true;
+                  });
                 },
               },
               "New"
@@ -285,11 +298,11 @@ export const component: ClosureComponent = (): Component => {
                         "success",
                         `${res.length} files deleted`
                       );
-                      store.fulfill(0, Date.now());
+                      store.setTimestamp(Date.now());
                     })
                     .catch((err) => {
                       notifications.push("error", err.message);
-                      store.fulfill(0, Date.now());
+                      store.setTimestamp(Date.now());
                     });
                 },
               },
@@ -299,15 +312,20 @@ export const component: ClosureComponent = (): Component => {
         };
       }
 
-      const filterAttrs = {};
-      filterAttrs["resource"] = "files";
-      filterAttrs["filter"] = vnode.attrs["filter"];
-      filterAttrs["onChange"] = onFilterChanged;
+      const filterAttrs = {
+        resource: "files",
+        filter: vnode.attrs["filter"],
+        onChange: onFilterChanged,
+      };
 
       return [
         m("h1", "Listing files"),
         m(filterComponent, filterAttrs),
-        m(indexTableComponent, attrs),
+        m(
+          "loading",
+          { queries: [files, count] },
+          m(indexTableComponent, attrs)
+        ),
       ];
     },
   };
