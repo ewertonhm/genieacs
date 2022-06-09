@@ -632,7 +632,7 @@ export async function timeoutOperations(
       }
     } else {
       throw new Error(`Unknown operation name ${operation.name}`);
-
+    }
 
     const DOWNLOAD_TIMEOUT =
       +localCache.getConfig(

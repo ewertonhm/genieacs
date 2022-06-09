@@ -44,7 +44,7 @@ export let tasksCollection: Collection,
   permissionsCollection: Collection,
   usersCollection: Collection,
   configCollection: Collection,
-  uploadsBucket: GridFSBucket;
+  uploadsBucket: GridFSBucket
 
 let clientPromise: Promise<MongoClient>;
 
