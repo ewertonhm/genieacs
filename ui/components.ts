@@ -39,6 +39,7 @@ import tags from "./components/tags";
 import ping from "./components/ping";
 import deviceLink from "./components/device-link";
 import longTextComponent from "./long-text-component";
+import deviceUploads from "./components/device-uploads";
 import loading from "./components/loading";
 
 const comps = {
@@ -55,6 +56,7 @@ const comps = {
   ping,
   "device-link": deviceLink,
   "long-text": longTextComponent,
+  "device-uploads": deviceUploads,
   loading: loading,
 };
 
