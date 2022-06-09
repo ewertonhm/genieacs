@@ -117,7 +117,7 @@ export async function listener(
     logger.accessInfo(log);
 
     logger.accessInfo(log);
-  } else if (request.method === "PUT") {
+  if (request.method === "PUT") {
     const [, deviceId, ...filePath] = urlParts.pathname
       .split("/")
       .map(querystring.unescape);
