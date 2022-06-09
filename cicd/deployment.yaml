@@ -49,7 +49,7 @@ spec:
     spec:
       containers:
         - name: cwmp
-          image: ewertonmarschalk/genieacs-cwmp:1
+          image: ewertonmarschalk/genieacs-cwmp:latest
 ---
 apiVersion: v1
 kind: Service
@@ -79,7 +79,7 @@ spec:
     spec:
       containers:
         - name: nbi
-          image: ewertonmarschalk/genieacs-nbi:1
+          image: ewertonmarschalk/genieacs-nbi:latest
 ---
 apiVersion: v1
 kind: Service
@@ -109,7 +109,7 @@ spec:
     spec:
       containers:
         - name: fs
-          image: ewertonmarschalk/genieacs-fs:1
+          image: ewertonmarschalk/genieacs-fs:latest
 ---
 apiVersion: v1
 kind: Service
@@ -139,7 +139,7 @@ spec:
     spec:
       containers:
         - name: ui
-          image: ewertonmarschalk/genieacs-ui:1
+          image: ewertonmarschalk/genieacs-ui:latest
 ---
 apiVersion: v1
 kind: Service
