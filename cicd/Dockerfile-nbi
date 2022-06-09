@@ -3,7 +3,6 @@ WORKDIR /app,
 RUN npm install -g ts
 RUN npm install -g typescript
 RUN npm install -g gulp
-RUN npm ci
 COPY package*.json ./
 RUN npm install
 COPY . .
