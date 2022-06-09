@@ -112,6 +112,10 @@ jobs:
       - name: Deploy to Kubernetes cluster on DigitalOcean
         uses: Azure/k8s-deploy@v3.1
         with:
-          images: ewertonmarschalk/kube-news:${{github.run_number}}
+          images: |
+            ewertonmarschalk/genieacs-cwmp:${{github.run_number}}
+            ewertonmarschalk/genieacs-ui:${{github.run_number}}
+            ewertonmarschalk/genieacs-nbi:${{github.run_number}}
+            ewertonmarschalk/genieacs-fs:${{github.run_number}}
           manifests: |
             ./cicd/deployment.yaml

@@ -5,7 +5,7 @@ RUN npm install
 COPY . .
 RUN npm run build
 RUN mkdir logs
-RUN touch /logs/genieacs-cwmp-access.log
+RUN touch logs/genieacs-cwmp-access.log
 
 ENV GENIEACS_CWMP_ACCESS_LOG_FILE=./logs/genieacs-cwmp-access.log
 ENV GENIEACS_DEBUG_FILE=./logs/genieacs-debug.yaml
